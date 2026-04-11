@@ -235,7 +235,7 @@
 
   <div id="ui-root">
     <h1>Кампус ЛГУ им. В.&nbsp;Даля</h1>
-    <p class="subtitle">Корпуса — <code>MANUAL_BUILDINGS</code>, окружение — <code>SURROUNDING_BUILDINGS</code>, карта района одним файлом — <code>DISTRICT_MAP_GLB</code> в <code>MODEL_CONFIG</code>. Сервер: <code>http://</code>, не <code>file://</code>.</p>
+    <p class="subtitle">Корпуса — <code>MANUAL_BUILDINGS</code> (раскладка с экрана при <code>PERSIST_CAMPUS_LAYOUT</code> запоминается в браузере), окружение — <code>SURROUNDING_BUILDINGS</code>, карта — <code>DISTRICT_MAP_GLB</code>. Сервер: <code>http://</code>, не <code>file://</code>.</p>
 
     <div class="field">
       <label for="search-room">Поиск аудитории</label>
@@ -254,7 +254,12 @@
 
     <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
       <label>Поворот корпуса</label>
-      <p class="hint" style="margin:0 0 8px 0;">Для здания из «Выберите здание». Масштаб не в интерфейсе: задайте <code>modelScale</code> у корпуса в <code>MANUAL_BUILDINGS</code> и при необходимости <code>NORMALIZED_BUILDING_MAX_DIM</code> / <code>DEFAULT_BUILDING_SCALE</code> в <code>MODEL_CONFIG</code>, затем обновите страницу.</p>
+      <p class="hint" style="margin:0 0 8px 0;">Для здания из «Выберите здание». <strong>Масштаб</strong> — слайдер ниже (множитель к подогнанному GLB); «Скопировать позиции» добавит <code>buildingSizeMultiplier</code>. Общая база всех корпусов — <code>NORMALIZED_BUILDING_MAX_DIM</code> в коде.</p>
+      <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <span style="opacity:0.85;font-size:12px;">Размер (×)</span>
+        <input type="range" id="building-size-slider" min="0.25" max="2.5" value="1" step="0.01" style="flex:1;min-width:120px;" />
+        <span id="building-size-readout" style="min-width:3.2em;text-align:right;font-variant-numeric:tabular-nums;font-size:12px;">1.00×</span>
+      </div>
       <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;">
         <span style="opacity:0.85;font-size:12px;">Поворот (ось Y)</span>
         <button type="button" id="btn-building-rotate-ccw" class="ghost" title="Против часовой">↺</button>
@@ -285,7 +290,8 @@
         </select>
       </div>
       <button type="button" id="btn-copy-layout" style="margin-top:10px;">Скопировать позиции в буфер</button>
-      <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». Клик по зданию подставляет его в gizmo. Макет зафиксирован (<code>DISTRICT_MAP_*</code> в коде). Поворот — блок выше. Orbit отключается, пока тянете gizmo.</p>
+      <button type="button" id="btn-clear-saved-layout" class="ghost" style="margin-top:8px;">Сбросить сохранённую раскладку</button>
+      <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». Раскладка корпусов (место, поворот, размер) при включённом <code>PERSIST_CAMPUS_LAYOUT</code> запоминается в этом браузере. Клик по зданию подставляет его в gizmo. Макет — <code>DISTRICT_MAP_*</code>. Orbit отключается, пока тянете gizmo.</p>
     </div>
 
     <div class="toggle-row">
@@ -342,9 +348,15 @@
      * - Удалите лишние объекты или скопируйте один блок, изменив id, name, position, modelPath.
      * - disabled: true — временно скрыть корпус со сцены.
      * - modelPath: путь относительно BASE_URL (папка с HTML при serve).
-     * - modelScale: опционально, иначе DEFAULT_BUILDING_SCALE; множитель до нормализации по NORMALIZED_BUILDING_MAX_DIM.
+     * - Размер (важно): при NORMALIZE_BUILDING_SIZE в MODEL_CONFIG каждый GLB подгоняется так, чтобы max(x,y,z) стал
+     *   NORMALIZED_BUILDING_MAX_DIM. Тогда modelScale до подгонки сокращается формулой — итоговый габарит не меняется.
+     *   Как задавать по-разному:
+     *   • Все корпуса одного класса: крутите только NORMALIZED_BUILDING_MAX_DIM.
+     *   • Один корпус крупнее/мельче: normalizeMaxDim: 22 (свой «целевой max-габарит» для этой модели).
+     *   • Полный ручной масштаб без подгонки к общему габариту: normalize: false и тогда modelScale (и DEFAULT_BUILDING_SCALE).
+     * - modelScale: при normalize: false — главный рычаг размера; иначе почти не влияет (кроме крайних clamp в подгонке).
+     * - buildingSizeMultiplier: опционально (по умолчанию 1). Доп. равномерный масштаб визуала после подгонки; задаётся в UI слайдером и копируется в буфер.
      * - rotationY: опционально, радианы; в интерфейсе — ↺ ↻ и слайдер; после расстановки — «Скопировать позиции».
-     * - Размер: NORMALIZE_BUILDING_SIZE + NORMALIZED_BUILDING_MAX_DIM в MODEL_CONFIG (один max-габарит у всех).
      *
      * Шаблон нового корпуса:
      * {
@@ -561,10 +573,11 @@
       FLOOR_PLAN_Y_OFFSET: 28,
       FLOOR_PLAN_SCALE: 1,
       FLOOR_HEIGHT_METERS: 3.5,
+      /** Используется, если у корпуса normalize: false (см. MANUAL_BUILDINGS). */
       DEFAULT_BUILDING_SCALE: 1,
       /**
-       * Нормализация размера: все корпуса подгоняются под один max-габарит. Общий «крупнее/мельче» — крутите
-       * NORMALIZED_BUILDING_MAX_DIM; отдельное здание — modelScale в MANUAL_BUILDINGS. Перезагрузка страницы.
+       * Нормализация: каждый GLB масштабируется так, чтобы max(x,y,z) = NORMALIZED_BUILDING_MAX_DIM (если у корпуса
+       * не задан свой normalizeMaxDim и не стоит normalize: false). Общий «крупнее/мельче» — этот параметр.
        */
       NORMALIZE_BUILDING_SIZE: true,
       NORMALIZED_BUILDING_MAX_DIM: 18,
@@ -585,6 +598,17 @@
 
       /** Кнопки ↺ ↻ и слайдер: шаг поворота вокруг Y (градусы) */
       PLACEMENT_MODEL_ROTATE_STEP_DEG: 5,
+      /** Слайдер «Размер» у корпуса: пределы множителя buildingSizeMultiplier */
+      BUILDING_SIZE_SLIDER_MIN: 0.25,
+      BUILDING_SIZE_SLIDER_MAX: 2.5,
+      /**
+       * Позиция (XZ), поворот Y и buildingSizeMultiplier корпусов — в localStorage браузера;
+       * при следующем открытии страницы подставляются поверх данных из MANUAL_BUILDINGS.
+       * false — только правки в коде / «Скопировать позиции».
+       */
+      PERSIST_CAMPUS_LAYOUT: true,
+      /** Смените ключ, если нужен отдельный пресет (или очистка старого формата). */
+      CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v1',
 
       /**
        * Карта района одним GLB. Положите файл сюда: maket_rayona/maket_rayona.glb
@@ -657,6 +681,9 @@
       /** Выше — «тело» кварталов, ниже или равно — дороги/контуры (остаются тёмнее). */
       DISTRICT_MAP_LINE_LUMINANCE_MAX: 0.38
     };
+
+    /** true — пока грузятся корпуса и подставляется localStorage (не писать в хранилище). */
+    let campusLayoutLoadPass = false;
 
     const container = document.getElementById('canvas-wrap');
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -1074,6 +1101,14 @@
 
     transformControls.addEventListener('dragging-changed', (e) => {
       controls.enabled = !e.value;
+      if (
+        !e.value &&
+        MODEL_CONFIG.PERSIST_CAMPUS_LAYOUT !== false &&
+        !campusLayoutLoadPass
+      ) {
+        const obj = transformControls.object;
+        if (obj && obj.userData.buildingId) saveBuildingLayoutToStorage();
+      }
     });
     transformControls.addEventListener('change', () => {
       const obj = transformControls.object;
@@ -1168,13 +1203,39 @@
 
     function recomputeEntranceWorldFromOffset(b) {
       const r = b.rotationY || 0;
-      const ox = b._entranceOffset.x;
-      const oz = b._entranceOffset.z;
+      const m = b.buildingSizeMultiplier ?? 1;
+      const base = b._entranceOffsetUnscaled;
+      if (!base) return;
+      const ox = base.x * m;
+      const oz = base.z * m;
       b.entranceWorld.x = b.position.x + ox * Math.cos(r) - oz * Math.sin(r);
       b.entranceWorld.z = b.position.z + ox * Math.sin(r) + oz * Math.cos(r);
     }
 
+    function applyBuildingSizeToVisual(b) {
+      if (!b) return;
+      const root = buildingMeshes.get(b.id);
+      const visual = root?.userData?.buildingVisual;
+      if (!visual || visual.userData.postFitUniformScale == null) return;
+      const base = visual.userData.postFitUniformScale;
+      const smin = Number(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MIN) || 0.25;
+      const smax = Number(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MAX) || 2.5;
+      const m = THREE.MathUtils.clamp(
+        Number(b.buildingSizeMultiplier) || 1,
+        smin,
+        smax
+      );
+      b.buildingSizeMultiplier = m;
+      visual.scale.setScalar(base * m);
+      recomputeEntranceWorldFromOffset(b);
+      updateBuildingLabel(b.id);
+      scheduleSaveBuildingLayout();
+      if (currentFloorBuildingId === b.id) void updateFloorPlan();
+      if (placementMode) refreshTransformAttachment();
+    }
+
     let buildingRotateSliderSilent = false;
+    let buildingSizeSliderSilent = false;
 
     function normalizeBuildingRotationDeg(deg) {
       let d = deg;
@@ -1197,6 +1258,7 @@
           slider.value = '0';
           buildingRotateSliderSilent = false;
         }
+        updateBuildingSizeReadout();
         return;
       }
       if (slider) slider.disabled = false;
@@ -1220,6 +1282,7 @@
       recomputeEntranceWorldFromOffset(b);
       updateBuildingLabel(bid);
       updateBuildingRotationReadout();
+      scheduleSaveBuildingLayout();
       if (placementMode) refreshTransformAttachment();
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
@@ -1235,6 +1298,7 @@
       recomputeEntranceWorldFromOffset(b);
       updateBuildingLabel(bid);
       updateBuildingRotationReadout();
+      scheduleSaveBuildingLayout();
       if (placementMode) refreshTransformAttachment();
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
@@ -1250,6 +1314,7 @@
       recomputeEntranceWorldFromOffset(b);
       updateBuildingLabel(bid);
       updateBuildingRotationReadout();
+      scheduleSaveBuildingLayout();
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
 
@@ -1324,6 +1389,91 @@
 
     // --- Building registry ---
     const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
+
+    let layoutSaveTimer = null;
+
+    function campusLayoutStorageKey() {
+      return (
+        MODEL_CONFIG.CAMPUS_LAYOUT_STORAGE_KEY ||
+        'lsu-dal-campus-nav-building-layout-v1'
+      );
+    }
+
+    function saveBuildingLayoutToStorage() {
+      if (MODEL_CONFIG.PERSIST_CAMPUS_LAYOUT === false || campusLayoutLoadPass) return;
+      try {
+        const buildings = MODEL_CONFIG.buildings.map((b) => ({
+          id: b.id,
+          position: { x: b.position.x, z: b.position.z },
+          rotationY: b.rotationY ?? 0,
+          buildingSizeMultiplier: b.buildingSizeMultiplier ?? 1
+        }));
+        const payload = { v: 1, savedAt: Date.now(), buildings };
+        localStorage.setItem(campusLayoutStorageKey(), JSON.stringify(payload));
+      } catch (e) {
+        console.warn('[LSU Nav] Не удалось сохранить раскладку в localStorage', e);
+      }
+    }
+
+    function scheduleSaveBuildingLayout() {
+      if (MODEL_CONFIG.PERSIST_CAMPUS_LAYOUT === false || campusLayoutLoadPass) return;
+      if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+      layoutSaveTimer = setTimeout(() => {
+        layoutSaveTimer = null;
+        saveBuildingLayoutToStorage();
+      }, 400);
+    }
+
+    function applyPersistedBuildingLayout() {
+      if (MODEL_CONFIG.PERSIST_CAMPUS_LAYOUT === false) return;
+      try {
+        const raw = localStorage.getItem(campusLayoutStorageKey());
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.buildings)) return;
+        const byId = new Map(data.buildings.map((x) => [x.id, x]));
+        const smin = Number(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MIN) || 0.25;
+        const smax = Number(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MAX) || 2.5;
+        for (const b of MODEL_CONFIG.buildings) {
+          const s = byId.get(b.id);
+          if (!s) continue;
+          if (typeof s.position?.x === 'number') b.position.x = s.position.x;
+          if (typeof s.position?.z === 'number') b.position.z = s.position.z;
+          if (typeof s.rotationY === 'number') b.rotationY = s.rotationY;
+          if (
+            typeof s.buildingSizeMultiplier === 'number' &&
+            Number.isFinite(s.buildingSizeMultiplier) &&
+            s.buildingSizeMultiplier > 0
+          ) {
+            b.buildingSizeMultiplier = THREE.MathUtils.clamp(
+              s.buildingSizeMultiplier,
+              smin,
+              smax
+            );
+          }
+          const root = buildingMeshes.get(b.id);
+          if (!root) continue;
+          root.position.set(b.position.x, 0, b.position.z);
+          root.rotation.y = b.rotationY ?? 0;
+          applyBuildingSizeToVisual(b);
+          updateBuildingLabel(b.id);
+        }
+      } catch (e) {
+        console.warn('[LSU Nav] Не удалось восстановить раскладку из localStorage', e);
+      }
+    }
+
+    function clearPersistedBuildingLayout() {
+      try {
+        localStorage.removeItem(campusLayoutStorageKey());
+      } catch (e) {
+        console.warn('[LSU Nav] localStorage', e);
+      }
+      appendInfo(
+        'Сохранённая раскладка корпусов удалена. Обновите страницу, чтобы подтянуть позиции из <code>MANUAL_BUILDINGS</code>.',
+        false
+      );
+    }
     const buildingLabels = new Map(); // id -> CSS2DObject
     const contextBuildingMeshes = new Map();
     const contextBuildingLabels = new Map();
@@ -1555,27 +1705,48 @@
           'Страница открыта как <strong>file://</strong> — GLB не загрузятся. Запустите сервер в папке с HTML (<code>npx serve .</code>) и откройте <code>http://…</code>.';
       }
 
+      campusLayoutLoadPass = true;
+      try {
       for (let i = 0; i < MODEL_CONFIG.buildings.length; i++) {
         const b = MODEL_CONFIG.buildings[i];
         if (b.rotationY === undefined) b.rotationY = 0;
+        const smin = Number(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MIN) || 0.25;
+        const smax = Number(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MAX) || 2.5;
+        if (
+          b.buildingSizeMultiplier == null ||
+          !Number.isFinite(b.buildingSizeMultiplier) ||
+          b.buildingSizeMultiplier <= 0
+        ) {
+          b.buildingSizeMultiplier = 1;
+        } else {
+          b.buildingSizeMultiplier = THREE.MathUtils.clamp(
+            Number(b.buildingSizeMultiplier),
+            smin,
+            smax
+          );
+        }
         buildingDataById.set(b.id, b);
-        b._entranceOffset = {
-          x: b.entranceWorld.x - b.position.x,
-          z: b.entranceWorld.z - b.position.z
-        };
 
         const url = resolveModelPath(b.modelPath);
         const root = new THREE.Group();
         root.userData.buildingId = b.id;
 
+        const buildingNormOpts =
+          b.normalize === false
+            ? { skip: true }
+            : b.normalizeMaxDim != null && b.normalizeMaxDim > 0
+              ? { maxDim: b.normalizeMaxDim }
+              : undefined;
+
         let sceneModel = await loadGLB(url, b.id, 'building');
         if (sceneModel) {
           const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
           sceneModel.scale.setScalar(Math.max(1e-5, sc));
-          const fitOk = fitBuildingModelToRoot(sceneModel);
+          const fitOk = fitBuildingModelToRoot(sceneModel, buildingNormOpts);
           if (!fitOk) {
             console.warn(`[LSU Nav] Подгонка габарита не удалась для «${b.name}»`);
           }
+          sceneModel.userData.postFitUniformScale = sceneModel.scale.x;
           sceneModel.traverse((o) => {
             if (o.isMesh) {
               o.castShadow = true;
@@ -1594,12 +1765,24 @@
           );
           const fallback = createFallbackBuildingMesh(b.id, palette[i % palette.length]);
           root.add(fallback);
-          const fitOkFb = fitBuildingModelToRoot(fallback);
+          const fitOkFb = fitBuildingModelToRoot(fallback, buildingNormOpts);
           if (!fitOkFb) {
             console.warn(`[LSU Nav] Подгонка габарита не удалась (заглушка «${b.name}»)`);
           }
+          fallback.userData.postFitUniformScale = fallback.scale.x;
           root.userData.buildingVisual = fallback;
         }
+
+        const m0 = Math.max(1e-5, b.buildingSizeMultiplier ?? 1);
+        const r0 = b.rotationY || 0;
+        const edx = b.entranceWorld.x - b.position.x;
+        const edz = b.entranceWorld.z - b.position.z;
+        const c0 = Math.cos(r0);
+        const s0 = Math.sin(r0);
+        b._entranceOffsetUnscaled = {
+          x: (edx * c0 + edz * s0) / m0,
+          z: (-edx * s0 + edz * c0) / m0
+        };
 
         root.position.set(b.position.x, 0, b.position.z);
         root.rotation.y = b.rotationY;
@@ -1611,6 +1794,7 @@
         storeOriginalMaterials(root);
         scene.add(root);
         buildingMeshes.set(b.id, root);
+        applyBuildingSizeToVisual(b);
 
         const div = document.createElement('div');
         div.className = 'building-label';
@@ -1624,6 +1808,10 @@
         buildingLabels.set(b.id, label);
         scene.add(label);
         updateBuildingLabel(b.id);
+      }
+      applyPersistedBuildingLayout();
+      } finally {
+        campusLayoutLoadPass = false;
       }
       if (fallbackCount === 0 && window.location.protocol !== 'file:') {
         warnEl.hidden = true;
@@ -1823,7 +2011,42 @@
       const pt = document.getElementById('placement-target');
       if (pt) pt.value = 'campus';
       updateBuildingRotationReadout();
+      updateBuildingSizeReadout();
       refreshTransformAttachment();
+    }
+
+    function updateBuildingSizeReadout() {
+      const bid = document.getElementById('select-building').value;
+      const b = buildingDataById.get(bid);
+      const readout = document.getElementById('building-size-readout');
+      const slider = document.getElementById('building-size-slider');
+      if (!readout || !slider) return;
+      if (!b) {
+        readout.textContent = '—';
+        slider.disabled = true;
+        buildingSizeSliderSilent = true;
+        slider.value = '1';
+        buildingSizeSliderSilent = false;
+        return;
+      }
+      slider.disabled = false;
+      const m = b.buildingSizeMultiplier ?? 1;
+      readout.textContent = `${m.toFixed(2)}×`;
+      buildingSizeSliderSilent = true;
+      slider.value = String(m);
+      buildingSizeSliderSilent = false;
+    }
+
+    function setSelectedBuildingSizeFromSlider(value) {
+      const bid = document.getElementById('select-building').value;
+      const b = buildingDataById.get(bid);
+      if (!b) return;
+      const v = Number(value);
+      if (!Number.isFinite(v)) return;
+      b.buildingSizeMultiplier = v;
+      applyBuildingSizeToVisual(b);
+      const readout = document.getElementById('building-size-readout');
+      if (readout) readout.textContent = `${b.buildingSizeMultiplier.toFixed(2)}×`;
     }
 
     function flyToBuilding(bid) {
@@ -1923,6 +2146,16 @@
       setSelectedBuildingRotationFromSliderDeg(Number(e.target.value));
     });
 
+    const buildingSizeSliderEl = document.getElementById('building-size-slider');
+    if (buildingSizeSliderEl) {
+      buildingSizeSliderEl.min = String(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MIN ?? 0.25);
+      buildingSizeSliderEl.max = String(MODEL_CONFIG.BUILDING_SIZE_SLIDER_MAX ?? 2.5);
+      buildingSizeSliderEl.addEventListener('input', (e) => {
+        if (buildingSizeSliderSilent) return;
+        setSelectedBuildingSizeFromSlider(Number(e.target.value));
+      });
+    }
+
     document.getElementById('select-floor').addEventListener('change', () => {
       void updateFloorPlan();
     });
@@ -1971,10 +2204,16 @@
       const lines = MODEL_CONFIG.buildings.map((b) => {
         const deg = ((((b.rotationY || 0) * 180) / Math.PI).toFixed(1));
         const ms = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
+        const bs = b.buildingSizeMultiplier ?? 1;
+        const bsLine =
+          Math.abs(bs - 1) > 0.001
+            ? `  buildingSizeMultiplier: ${bs.toFixed(3)},\n`
+            : '';
         return (
           `  // ${b.name} (${b.id})\n` +
           `  position: { x: ${b.position.x.toFixed(2)}, z: ${b.position.z.toFixed(2)} },\n` +
           `  modelScale: ${ms.toFixed(3)},\n` +
+          bsLine +
           `  rotationY: ${(b.rotationY || 0).toFixed(5)}, // ${deg}°\n` +
           `  entranceWorld: { x: ${b.entranceWorld.x.toFixed(2)}, y: ${b.entranceWorld.y.toFixed(2)}, z: ${b.entranceWorld.z.toFixed(2)} },`
         );
@@ -2010,7 +2249,7 @@
       try {
         await navigator.clipboard.writeText(text);
         let msg =
-          'Скопировано: корпуса → в <code>MANUAL_BUILDINGS</code>; окружение → в <code>SURROUNDING_BUILDINGS</code>';
+          'Скопировано: корпуса → в <code>MANUAL_BUILDINGS</code> (при масштабе ≠ 1 — строка <code>buildingSizeMultiplier</code>); окружение → в <code>SURROUNDING_BUILDINGS</code>';
         if (districtMapObject) {
           msg +=
             '; макет — текущие <code>DISTRICT_MAP_POSITION</code> / <code>DISTRICT_MAP_ROTATION_Y</code> из конфига';
@@ -2020,6 +2259,10 @@
       } catch {
         window.prompt('Скопируйте вручную (Ctrl+C):', text);
       }
+    });
+
+    document.getElementById('btn-clear-saved-layout').addEventListener('click', () => {
+      clearPersistedBuildingLayout();
     });
 
     document.getElementById('btn-top-view').addEventListener('click', () => {
@@ -2109,7 +2352,10 @@
       contextBuildingMeshes,
       districtMapObject,
       MODEL_CONFIG,
-      transformControls
+      transformControls,
+      saveBuildingLayoutToStorage,
+      clearPersistedBuildingLayout,
+      applyPersistedBuildingLayout
     };
   </script>
 </body>
