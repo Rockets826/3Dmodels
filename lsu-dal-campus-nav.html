@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Навигация по кампусу — ЛГУ имени В. Даля</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap');
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Manrope', system-ui, sans-serif;
+      background: #0f1419;
+    }
+
+    #canvas-wrap {
+      position: fixed;
+      inset: 0;
+    }
+
+    #ui-root {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      max-width: 360px;
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      padding: 18px 20px;
+      border-radius: 14px;
+      background: rgba(18, 24, 32, 0.82);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+      color: #e8eef5;
+    }
+
+    #ui-root h1 {
+      margin: 0 0 4px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+
+    #ui-root .subtitle {
+      margin: 0 0 16px;
+      font-size: 0.75rem;
+      opacity: 0.65;
+      line-height: 1.4;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      opacity: 0.55;
+      margin-bottom: 6px;
+    }
+
+    select, input[type="search"], button {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+      font-family: inherit;
+      font-size: 0.88rem;
+    }
+
+    select:focus, input:focus, button:focus {
+      outline: none;
+      border-color: rgba(100, 200, 255, 0.5);
+    }
+
+    option { background: #1a222c; color: #fff; }
+
+    .row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .row button { flex: 1; }
+
+    button {
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    button:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, #2d8a6e, #1e6b55);
+      border-color: rgba(80, 200, 160, 0.35);
+    }
+
+    button.primary:hover {
+      filter: brightness(1.08);
+    }
+
+    button.ghost {
+      background: transparent;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 10px 0;
+      font-size: 0.85rem;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #3ecf9a;
+    }
+
+    #info-panel {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 0.82rem;
+      line-height: 1.5;
+      min-height: 48px;
+    }
+
+    #info-panel strong { color: #7dffb3; }
+
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 14, 18, 0.75);
+      backdrop-filter: blur(6px);
+      transition: opacity 0.35s ease, visibility 0.35s;
+    }
+
+    #loading-overlay.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #3ecf9a;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      margin-top: 16px;
+      color: #aab8c6;
+      font-size: 0.9rem;
+    }
+
+    .loading-inner {
+      text-align: center;
+    }
+
+    .hint {
+      margin-top: 12px;
+      font-size: 0.7rem;
+      opacity: 0.5;
+      line-height: 1.45;
+    }
+
+    .route-hint {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(62, 207, 154, 0.12);
+      border: 1px solid rgba(62, 207, 154, 0.25);
+      font-size: 0.78rem;
+      color: #9ee8c8;
+    }
+
+    .load-warning {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(180, 60, 50, 0.22);
+      border: 1px solid rgba(255, 120, 100, 0.45);
+      font-size: 0.78rem;
+      color: #ffc8c0;
+      line-height: 1.45;
+    }
+
+    .load-warning[hidden] { display: none !important; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "@tweenjs/tween.js": "https://cdn.jsdelivr.net/npm/@tweenjs/tween.js@23.1.3/dist/tween.esm.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="canvas-wrap"></div>
+
+  <div id="loading-overlay">
+    <div class="loading-inner">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loading-text">Загрузка сцены…</div>
+    </div>
+  </div>
+
+  <div id="ui-root">
+    <h1>Кампус ЛГУ им. В.&nbsp;Даля</h1>
+    <p class="subtitle">Корпуса задаются в массиве <code style="font-size:0.7em;opacity:0.8">MANUAL_BUILDINGS</code> в скрипте. GLB открывайте только через локальный сервер, не как <code>file://</code>.</p>
+
+    <div class="field">
+      <label for="search-room">Поиск аудитории</label>
+      <input type="search" id="search-room" placeholder="Например: 101, 2-15" autocomplete="off" />
+    </div>
+
+    <div class="field">
+      <label for="select-building">Выберите здание</label>
+      <select id="select-building"></select>
+    </div>
+
+    <div class="field">
+      <label for="select-floor">Выберите этаж</label>
+      <select id="select-floor"></select>
+    </div>
+
+    <div class="toggle-row">
+      <span>Показать схему этажа (2D GLB)</span>
+      <input type="checkbox" id="toggle-floor-plan" checked />
+    </div>
+
+    <div class="field">
+      <label for="route-from">Маршрут: откуда</label>
+      <select id="route-from"></select>
+    </div>
+    <div class="field">
+      <label for="route-to">Маршрут: куда</label>
+      <select id="route-to"></select>
+    </div>
+
+    <div class="row">
+      <button type="button" class="primary" id="btn-build-route">Построить маршрут</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button type="button" id="btn-clear-route">Сбросить маршрут</button>
+      <button type="button" id="btn-reset-camera">Сброс камеры</button>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button type="button" id="btn-top-view">Вид сверху (орто)</button>
+      <button type="button" id="btn-persp-view">Перспектива</button>
+    </div>
+
+    <div id="load-warning" class="load-warning" hidden></div>
+    <div id="info-panel">Кликните по зданию на сцене или выберите здание в списке.</div>
+    <div class="hint">Из папки с этим HTML: <code>npx --yes serve .</code> → в браузере откройте страницу по <code>http://127.0.0.1:…</code>. Иначе браузер не загрузит GLB — останутся кубы.</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+    import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+    import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+    import TWEEN from '@tweenjs/tween.js';
+
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.setDRACOLoader(dracoLoader);
+    gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
+    /**
+     * =============================================================================
+     * MANUAL_BUILDINGS — единственное место, где задаются корпуса
+     * =============================================================================
+     * - Удалите лишние объекты или скопируйте один блок, изменив id, name, position, modelPath.
+     * - disabled: true — временно скрыть корпус со сцены.
+     * - modelPath: путь относительно BASE_URL (папка с HTML при serve).
+     * - modelScale: опционально, иначе берётся DEFAULT_BUILDING_SCALE.
+     *
+     * Шаблон нового корпуса:
+     * {
+     *   id: 'uniq-id',
+     *   name: 'Название',
+     *   position: { x: 0, z: 0 },
+     *   modelPath: '3D/file.glb',
+     *   modelScale: 1,
+     *   disabled: false,
+     *   floors: [{ level: 1, modelPath: '' }],
+     *   rooms: [
+     *     { id: 'uniq-hall', label: 'Холл', floor: 1, local: { x: 0, z: 0 } },
+     *     { id: 'uniq-st', label: 'Лестница', floor: 1, local: { x: 2, z: -1 }, isStairs: true }
+     *   ],
+     *   entranceWorld: { x: 0, y: 1, z: 14 }
+     * }
+     */
+    const MANUAL_BUILDINGS = [
+      {
+        id: 'korpus-01',
+        name: 'Корпус 1',
+        position: { x: -84, z: -62 },
+        modelPath: '3D/korpus-01.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k01-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k01-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: -84, y: 1, z: -44 }
+      },
+      {
+        id: 'korpus-02',
+        name: 'Корпус 2',
+        position: { x: -28, z: -62 },
+        modelPath: '3D/korpus-02.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k02-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k02-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: -28, y: 1, z: -44 }
+      },
+      {
+        id: 'korpus-03',
+        name: 'Корпус 3',
+        position: { x: 28, z: -62 },
+        modelPath: '3D/korpus-03.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k03-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k03-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 28, y: 1, z: -44 }
+      },
+      {
+        id: 'korpus-04',
+        name: 'Корпус 4',
+        position: { x: 84, z: -62 },
+        modelPath: '3D/korpus-04.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k04-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k04-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 84, y: 1, z: -44 }
+      },
+      {
+        id: 'korpus-05',
+        name: 'Корпус 5',
+        position: { x: -84, z: 0 },
+        modelPath: '3D/korpus-05.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k05-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k05-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: -84, y: 1, z: 18 }
+      },
+      {
+        id: 'korpus-06',
+        name: 'Корпус 6',
+        position: { x: -28, z: 0 },
+        modelPath: '3D/korpus-06.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k06-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k06-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: -28, y: 1, z: 18 }
+      },
+      {
+        id: 'korpus-07',
+        name: 'Корпус 7',
+        position: { x: 28, z: 0 },
+        modelPath: '3D/korpus-07.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k07-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k07-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 28, y: 1, z: 18 }
+      },
+      {
+        id: 'korpus-08',
+        name: 'Корпус 8',
+        position: { x: 84, z: 0 },
+        modelPath: '3D/korpus-08.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k08-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k08-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 84, y: 1, z: 18 }
+      },
+      {
+        id: 'korpus-09',
+        name: 'Корпус 9',
+        position: { x: -84, z: 62 },
+        modelPath: '3D/korpus-09.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k09-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k09-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: -84, y: 1, z: 80 }
+      },
+      {
+        id: 'korpus-10',
+        name: 'Корпус 10',
+        position: { x: -28, z: 62 },
+        modelPath: '3D/korpus-10.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k10-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k10-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: -28, y: 1, z: 80 }
+      },
+      {
+        id: 'korpus-11',
+        name: 'Корпус 11',
+        position: { x: 28, z: 62 },
+        modelPath: '3D/korpus-11.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k11-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k11-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 28, y: 1, z: 80 }
+      },
+      {
+        id: 'korpus-12',
+        name: 'Корпус 12',
+        position: { x: 84, z: 62 },
+        modelPath: '3D/korpus-12.glb',
+        modelScale: 1,
+        disabled: false,
+        floors: [{ level: 1, modelPath: '' }],
+        rooms: [
+          { id: 'k12-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 'k12-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 84, y: 1, z: 80 }
+      }
+    ];
+
+    const MODEL_CONFIG = {
+      BASE_URL: './',
+      buildings: MANUAL_BUILDINGS.filter((b) => b.disabled !== true),
+      FLOOR_PLAN_Y_OFFSET: 28,
+      FLOOR_PLAN_SCALE: 1,
+      FLOOR_HEIGHT_METERS: 3.5,
+      DEFAULT_BUILDING_SCALE: 1
+    };
+
+    const container = document.getElementById('canvas-wrap');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingText = document.getElementById('loading-text');
+
+    let activeLoads = 0;
+    function beginLoad(msg) {
+      activeLoads++;
+      loadingText.textContent = msg || 'Загрузка…';
+      loadingOverlay.classList.remove('hidden');
+    }
+    function endLoad() {
+      activeLoads = Math.max(0, activeLoads - 1);
+      if (activeLoads === 0) loadingOverlay.classList.add('hidden');
+    }
+
+    function resolveModelPath(relativePath) {
+      if (!relativePath) return null;
+      const base = MODEL_CONFIG.BASE_URL.endsWith('/')
+        ? MODEL_CONFIG.BASE_URL
+        : MODEL_CONFIG.BASE_URL + '/';
+      const rel = relativePath.replace(/^\//, '');
+      const joined = base + rel.split('/').map(encodeURIComponent).join('/');
+      try {
+        return new URL(joined, window.location.href).href;
+      } catch {
+        return joined;
+      }
+    }
+
+    /** Резервный «корпус», если GLB не загрузился */
+    function createFallbackBuildingMesh(building, color) {
+      const w = 12, h = 14, d = 10;
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const mat = new THREE.MeshStandardMaterial({
+        color: color || 0x6b7c8c,
+        metalness: 0.2,
+        roughness: 0.75
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(building.position.x, h / 2, building.position.z);
+      mesh.userData.isFallback = true;
+      mesh.userData.buildingId = building.id;
+      return mesh;
+    }
+
+    function loadGLB(url, buildingId, kind) {
+      return new Promise((resolve) => {
+        if (!url) {
+          resolve(null);
+          return;
+        }
+        gltfLoader.load(
+          url,
+          (gltf) => resolve(gltf.scene),
+          undefined,
+          (err) => {
+            console.warn(
+              `[LSU Nav] Модель не найдена или ошибка загрузки (${kind}): ${url}`,
+              err
+            );
+            resolve(null);
+          }
+        );
+      });
+    }
+
+    // --- Scene ---
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0xb8d4ea, 0.0025);
+
+    const perspCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 4000);
+    perspCamera.position.set(160, 120, 200);
+
+    const frustumSize = 140;
+    const aspect = window.innerWidth / window.innerHeight;
+    const orthoCamera = new THREE.OrthographicCamera(
+      (-frustumSize * aspect) / 2,
+      (frustumSize * aspect) / 2,
+      frustumSize / 2,
+      -frustumSize / 2,
+      0.5,
+      2000
+    );
+    orthoCamera.position.set(0, 120, 0.1);
+    orthoCamera.lookAt(0, 0, 0);
+
+    let activeCamera = perspCamera;
+    let useOrtho = false;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    labelRenderer.domElement.style.position = 'absolute';
+    labelRenderer.domElement.style.top = '0';
+    labelRenderer.domElement.style.left = '0';
+    labelRenderer.domElement.style.pointerEvents = 'none';
+    container.appendChild(labelRenderer.domElement);
+
+    const controls = new OrbitControls(activeCamera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.maxPolarAngle = Math.PI / 2 - 0.05;
+    controls.minDistance = 8;
+    controls.maxDistance = 400;
+    controls.target.set(0, 8, 0);
+
+    // --- Lights & environment ---
+    scene.background = new THREE.Color(0x87b8e0);
+    const hemi = new THREE.HemisphereLight(0xdfefff, 0x3d4f5c, 0.55);
+    scene.add(hemi);
+
+    const dir = new THREE.DirectionalLight(0xfff5e6, 1.05);
+    dir.position.set(80, 120, 40);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(2048, 2048);
+    dir.shadow.camera.near = 10;
+    dir.shadow.camera.far = 400;
+    dir.shadow.camera.left = -100;
+    dir.shadow.camera.right = 100;
+    dir.shadow.camera.top = 100;
+    dir.shadow.camera.bottom = -100;
+    scene.add(dir);
+
+    const point = new THREE.PointLight(0xffaa66, 0.35, 200);
+    point.position.set(-40, 30, 40);
+    scene.add(point);
+
+    const groundGeo = new THREE.PlaneGeometry(1200, 1200);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x3d5c45,
+      metalness: 0,
+      roughness: 0.92
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(600, 60, 0x1a3320, 0x2a4a30);
+    grid.material.opacity = 0.35;
+    grid.material.transparent = true;
+    scene.add(grid);
+
+    // --- Building registry ---
+    const buildingMeshes = new Map(); // id -> root Object3D
+    const buildingDataById = new Map();
+    const originalMaterials = new WeakMap();
+
+    function storeOriginalMaterials(root) {
+      root.traverse((o) => {
+        if (o.isMesh && o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          originalMaterials.set(
+            o,
+            mats.map((m) => m.clone())
+          );
+        }
+      });
+    }
+
+    function highlightBuilding(root, on) {
+      root.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        const orig = originalMaterials.get(o);
+        if (on) {
+          mats.forEach((m, i) => {
+            if (m.emissive) {
+              m.emissive.setHex(0x224422);
+              m.emissiveIntensity = 0.45;
+            } else {
+              m.color?.offsetHSL(0, 0, 0.15);
+            }
+          });
+        } else if (orig) {
+          if (Array.isArray(o.material)) {
+            o.material = orig.map((m) => m.clone());
+          } else {
+            o.material = orig[0].clone();
+          }
+        }
+      });
+    }
+
+    let selectedBuildingId = null;
+
+    const floorPlanRoot = new THREE.Group();
+    scene.add(floorPlanRoot);
+
+    let currentFloorMesh = null;
+    let currentFloorBuildingId = null;
+    let currentFloorLevel = null;
+
+    const routeGroup = new THREE.Group();
+    scene.add(routeGroup);
+
+    const floorRouteGroup = new THREE.Group();
+    floorPlanRoot.add(floorRouteGroup);
+
+    function disposeSubtree(obj) {
+      obj.traverse((c) => {
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) {
+          const mats = Array.isArray(c.material) ? c.material : [c.material];
+          mats.forEach((m) => m.dispose && m.dispose());
+        }
+      });
+    }
+
+    function clearRoute() {
+      while (routeGroup.children.length) {
+        const c = routeGroup.children[0];
+        routeGroup.remove(c);
+        disposeSubtree(c);
+      }
+      while (floorRouteGroup.children.length) {
+        const c = floorRouteGroup.children[0];
+        floorRouteGroup.remove(c);
+        disposeSubtree(c);
+      }
+      document.querySelectorAll('.route-hint').forEach((el) => el.remove());
+    }
+
+    function lineMaterial(color) {
+      return new THREE.LineBasicMaterial({ color, linewidth: 1 });
+    }
+
+    function addLine3D(points) {
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.Line(geo, lineMaterial(0x22c55e));
+      routeGroup.add(line);
+    }
+
+    function addLine2DOnFloor(localPoints) {
+      const pts = localPoints.map((p) => new THREE.Vector3(p.x, 0.06, p.z));
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(geo, lineMaterial(0x22c55e));
+      floorRouteGroup.add(line);
+    }
+
+    function syncFloorRouteGroupPosition(building) {
+      if (!building) return;
+      const s = MODEL_CONFIG.FLOOR_PLAN_SCALE;
+      floorRouteGroup.position.set(
+        building.position.x,
+        MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET + 0.12,
+        building.position.z
+      );
+      floorRouteGroup.scale.setScalar(s);
+    }
+
+    /** Конус на середине вертикального участка (линия wStA→wStB уже нарисована) */
+    function addVerticalArrowIndicator(midWorld, directionUp) {
+      const coneGeo = new THREE.ConeGeometry(0.75, 2.2, 10);
+      const coneMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+      const cone = new THREE.Mesh(coneGeo, coneMat);
+      cone.position.copy(midWorld);
+      cone.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(0, directionUp ? 1 : -1, 0)
+      );
+      routeGroup.add(cone);
+    }
+
+    function worldFromFloorLocal(building, floorLevel, local) {
+      const bx = building.position.x;
+      const bz = building.position.z;
+      const yOff = MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET;
+      const fh = MODEL_CONFIG.FLOOR_HEIGHT_METERS;
+      const s = MODEL_CONFIG.FLOOR_PLAN_SCALE;
+      const y = yOff + 0.2 + (floorLevel - 1) * fh;
+      return new THREE.Vector3(bx + local.x * s, y, bz + local.z * s);
+    }
+
+    function findStairsRoom(building, floor) {
+      return building.rooms.find((r) => r.floor === floor && r.isStairs) || null;
+    }
+
+    function buildRoute() {
+      clearRoute();
+      const fromId = document.getElementById('route-from').value;
+      const toId = document.getElementById('route-to').value;
+      if (!fromId || !toId || fromId === toId) {
+        appendInfo('Выберите две разные точки маршрута.', true);
+        return;
+      }
+
+      const from = roomIndex.get(fromId);
+      const to = roomIndex.get(toId);
+      if (!from || !to) return;
+
+      const ui = document.getElementById('ui-root');
+      const hint = document.createElement('div');
+      hint.className = 'route-hint';
+
+      if (from.buildingId === to.buildingId) {
+        const b = buildingDataById.get(from.buildingId);
+        syncFloorRouteGroupPosition(b);
+        if (from.floor === to.floor) {
+          addLine2DOnFloor([
+            { x: from.room.local.x, z: from.room.local.z },
+            { x: to.room.local.x, z: to.room.local.z }
+          ]);
+          hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: линия на схеме.`;
+        } else {
+          const sFrom = findStairsRoom(b, from.floor);
+          const sTo = findStairsRoom(b, to.floor);
+          const localStA = sFrom?.local || from.room.local;
+          const localStB = sTo?.local || to.room.local;
+          const wA = worldFromFloorLocal(b, from.floor, from.room.local);
+          const wStA = worldFromFloorLocal(b, from.floor, localStA);
+          const wStB = worldFromFloorLocal(b, to.floor, localStB);
+          const wB = worldFromFloorLocal(b, to.floor, to.room.local);
+          addLine3D([wA, wStA]);
+          addLine3D([wStA, wStB]);
+          addVerticalArrowIndicator(wStA.clone().lerp(wStB, 0.5), to.floor > from.floor);
+          addLine3D([wStB, wB]);
+          hint.textContent =
+            to.floor > from.floor
+              ? `Разные этажи: маршрут к лестнице, подъём (стрелка), затем к цели. Линии в 3D над схемой.`
+              : `Разные этажи: маршрут к лестнице, спуск, затем к цели.`;
+        }
+      } else {
+        const bA = buildingDataById.get(from.buildingId);
+        const bB = buildingDataById.get(to.buildingId);
+        const pA = new THREE.Vector3(bA.entranceWorld.x, bA.entranceWorld.y, bA.entranceWorld.z);
+        const pB = new THREE.Vector3(bB.entranceWorld.x, bB.entranceWorld.y, bB.entranceWorld.z);
+        addLine3D([pA, pB]);
+        hint.textContent = `Между корпусами: зелёная линия по кампусу от входа к входу. Внутри зданий используйте схемы этажей.`;
+      }
+      ui.appendChild(hint);
+    }
+
+    const roomIndex = new Map();
+
+    function indexRooms() {
+      roomIndex.clear();
+      MODEL_CONFIG.buildings.forEach((b) => {
+        (b.rooms || []).forEach((r) => {
+          roomIndex.set(r.id, { buildingId: b.id, floor: r.floor, room: r, building: b });
+        });
+      });
+    }
+
+    function populateRouteSelects() {
+      const fromSel = document.getElementById('route-from');
+      const toSel = document.getElementById('route-to');
+      fromSel.innerHTML = '';
+      toSel.innerHTML = '';
+      roomIndex.forEach((data, id) => {
+        const b = data.building;
+        const text = `${b.name} — эт.${data.floor} — ${data.room.label}`;
+        const o1 = new Option(text, id);
+        const o2 = new Option(text, id);
+        fromSel.add(o1);
+        toSel.add(o2);
+      });
+    }
+
+    async function loadCampus() {
+      beginLoad('Загрузка моделей корпусов…');
+      indexRooms();
+      const palette = [0x8b9dc3, 0xa68bc4, 0x7eb8da];
+      let fallbackCount = 0;
+      const warnEl = document.getElementById('load-warning');
+
+      if (window.location.protocol === 'file:') {
+        warnEl.hidden = false;
+        warnEl.innerHTML =
+          'Страница открыта как <strong>file://</strong> — GLB не загрузятся. Запустите сервер в папке с HTML (<code>npx serve .</code>) и откройте <code>http://…</code>.';
+      }
+
+      for (let i = 0; i < MODEL_CONFIG.buildings.length; i++) {
+        const b = MODEL_CONFIG.buildings[i];
+        buildingDataById.set(b.id, b);
+        const url = resolveModelPath(b.modelPath);
+        const group = new THREE.Group();
+        group.userData.buildingId = b.id;
+
+        let sceneModel = await loadGLB(url, b.id, 'building');
+        if (sceneModel) {
+          const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
+          sceneModel.scale.setScalar(sc);
+          sceneModel.traverse((o) => {
+            if (o.isMesh) {
+              o.castShadow = true;
+              o.receiveShadow = true;
+            }
+            o.userData.buildingId = b.id;
+          });
+          // Центрируем модель горизонтально у позиции кампуса
+          const box = new THREE.Box3().setFromObject(sceneModel);
+          const center = box.getCenter(new THREE.Vector3());
+          sceneModel.position.set(
+            b.position.x - center.x,
+            -box.min.y,
+            b.position.z - center.z
+          );
+          group.add(sceneModel);
+        } else {
+          fallbackCount++;
+          console.warn(
+            `[LSU Nav] Модель не найдена, используется временная геометрия для «${b.name}»`
+          );
+          const fallback = createFallbackBuildingMesh(b, palette[i % palette.length]);
+          group.add(fallback);
+        }
+
+        group.userData.buildingId = b.id;
+        group.traverse((o) => {
+          o.userData.buildingId = b.id;
+        });
+
+        storeOriginalMaterials(group);
+        scene.add(group);
+        buildingMeshes.set(b.id, group);
+
+        const div = document.createElement('div');
+        div.className = 'building-label';
+        div.textContent = b.name;
+        div.style.color = '#fff';
+        div.style.fontWeight = '700';
+        div.style.fontSize = '13px';
+        div.style.textShadow = '0 1px 4px #000';
+        div.style.pointerEvents = 'none';
+        const label = new CSS2DObject(div);
+        label.position.set(b.position.x, 16, b.position.z);
+        scene.add(label);
+      }
+      if (fallbackCount === 0 && window.location.protocol !== 'file:') {
+        warnEl.hidden = true;
+      } else if (fallbackCount > 0 && window.location.protocol !== 'file:') {
+        warnEl.hidden = false;
+        warnEl.innerHTML = `Не удалось загрузить <strong>${fallbackCount}</strong> из ${MODEL_CONFIG.buildings.length} GLB (показаны кубы). Проверьте пути в <code>MANUAL_BUILDINGS</code>, папку <code>3D/</code> и консоль (F12).`;
+      }
+      endLoad();
+      populateRouteSelects();
+      populateBuildingSelect();
+    }
+
+    function populateBuildingSelect() {
+      const sel = document.getElementById('select-building');
+      sel.innerHTML = '';
+      MODEL_CONFIG.buildings.forEach((b) => {
+        sel.add(new Option(b.name, b.id));
+      });
+      updateFloorSelect();
+    }
+
+    function updateFloorSelect() {
+      const bid = document.getElementById('select-building').value;
+      const b = buildingDataById.get(bid);
+      const fs = document.getElementById('select-floor');
+      fs.innerHTML = '';
+      if (!b) return;
+      b.floors.forEach((f) => {
+        fs.add(new Option(`Этаж ${f.level}`, String(f.level)));
+      });
+    }
+
+    async function updateFloorPlan() {
+      for (let i = floorPlanRoot.children.length - 1; i >= 0; i--) {
+        const ch = floorPlanRoot.children[i];
+        if (ch !== floorRouteGroup) floorPlanRoot.remove(ch);
+      }
+      if (!floorPlanRoot.children.includes(floorRouteGroup)) {
+        floorPlanRoot.add(floorRouteGroup);
+      }
+
+      const bid = document.getElementById('select-building').value;
+      const level = parseInt(document.getElementById('select-floor').value, 10);
+      const b = buildingDataById.get(bid);
+      if (!b) return;
+
+      syncFloorRouteGroupPosition(b);
+
+      const floorDef = b.floors.find((f) => f.level === level);
+      if (!floorDef || !document.getElementById('toggle-floor-plan').checked) {
+        currentFloorMesh = null;
+        currentFloorBuildingId = bid;
+        currentFloorLevel = level;
+        return;
+      }
+
+      const url = resolveModelPath(floorDef.modelPath);
+      beginLoad('Загрузка схемы этажа…');
+      let plan = await loadGLB(url, bid, `floor ${level}`);
+      if (!plan) {
+        console.warn(`[LSU Nav] Схема этажа не загружена, плейсхолдер для этажа ${level}`);
+        const ph = new THREE.Mesh(
+          new THREE.PlaneGeometry(14, 10),
+          new THREE.MeshStandardMaterial({
+            color: 0xd4e09b,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.85
+          })
+        );
+        plan = new THREE.Group();
+        plan.add(ph);
+      }
+
+      plan.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = false;
+          o.receiveShadow = true;
+        }
+      });
+
+      plan.rotation.x = -Math.PI / 2;
+      plan.scale.setScalar(MODEL_CONFIG.FLOOR_PLAN_SCALE);
+      plan.position.set(
+        b.position.x,
+        MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET,
+        b.position.z
+      );
+
+      floorPlanRoot.add(plan);
+      if (floorPlanRoot.children.indexOf(floorRouteGroup) >= 0) {
+        floorPlanRoot.remove(floorRouteGroup);
+        floorPlanRoot.add(floorRouteGroup);
+      }
+      currentFloorMesh = plan;
+      currentFloorBuildingId = bid;
+      currentFloorLevel = level;
+      endLoad();
+    }
+
+    function appendInfo(html, isError) {
+      const el = document.getElementById('info-panel');
+      el.innerHTML = html;
+      el.style.borderColor = isError ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.06)';
+    }
+
+    function showBuildingInfo(bid) {
+      const b = buildingDataById.get(bid);
+      if (!b) return;
+      const floors = b.floors.length;
+      const rooms = (b.rooms || []).map((r) => r.label).join(', ');
+      appendInfo(
+        `<strong>${b.name}</strong><br/>Этажей: ${floors}<br/>Аудитории и точки: ${rooms || '—'}`
+      );
+    }
+
+    function setSelectedBuilding(bid) {
+      if (selectedBuildingId && buildingMeshes.has(selectedBuildingId)) {
+        highlightBuilding(buildingMeshes.get(selectedBuildingId), false);
+      }
+      selectedBuildingId = bid;
+      if (bid && buildingMeshes.has(bid)) {
+        highlightBuilding(buildingMeshes.get(bid), true);
+      }
+      showBuildingInfo(bid);
+    }
+
+    function flyToBuilding(bid) {
+      const b = buildingDataById.get(bid);
+      if (!b) return;
+      const target = new THREE.Vector3(b.position.x, 8, b.position.z);
+      const endPos = new THREE.Vector3(b.position.x + 35, 28, b.position.z + 35);
+
+      new TWEEN.Tween(activeCamera.position)
+        .to({ x: endPos.x, y: endPos.y, z: endPos.z }, 1200)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .start();
+      new TWEEN.Tween(controls.target)
+        .to({ x: target.x, y: target.y, z: target.z }, 1200)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .start();
+    }
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function onPointerDown(ev) {
+      if (ev.button !== 0) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, activeCamera);
+      const objs = [...buildingMeshes.values()];
+      const hits = raycaster.intersectObjects(objs, true);
+      if (!hits.length) return;
+      let o = hits[0].object;
+      while (o && !o.userData.buildingId && o.parent) o = o.parent;
+      const bid = o?.userData?.buildingId;
+      if (!bid) return;
+      document.getElementById('select-building').value = bid;
+      updateFloorSelect();
+      setSelectedBuilding(bid);
+      flyToBuilding(bid);
+      void updateFloorPlan();
+    }
+
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+
+    document.getElementById('select-building').addEventListener('change', () => {
+      updateFloorSelect();
+      setSelectedBuilding(document.getElementById('select-building').value);
+      flyToBuilding(document.getElementById('select-building').value);
+      void updateFloorPlan();
+    });
+
+    document.getElementById('select-floor').addEventListener('change', () => {
+      void updateFloorPlan();
+    });
+
+    document.getElementById('toggle-floor-plan').addEventListener('change', () => {
+      void updateFloorPlan();
+    });
+
+    document.getElementById('btn-reset-camera').addEventListener('click', () => {
+      new TWEEN.Tween(activeCamera.position)
+        .to({ x: 160, y: 120, z: 200 }, 900)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .start();
+      new TWEEN.Tween(controls.target)
+        .to({ x: 0, y: 8, z: 0 }, 900)
+        .easing(TWEEN.Easing.Cubic.Out)
+        .start();
+    });
+
+    document.getElementById('btn-top-view').addEventListener('click', () => {
+      useOrtho = true;
+      activeCamera = orthoCamera;
+      controls.object = orthoCamera;
+      const bid = document.getElementById('select-building').value;
+      const b = buildingDataById.get(bid);
+      const cx = b ? b.position.x : 0;
+      const cz = b ? b.position.z : 0;
+      orthoCamera.position.set(cx, 150, cz);
+      orthoCamera.lookAt(cx, 0, cz);
+      controls.target.set(cx, 0, cz);
+      controls.update();
+    });
+
+    document.getElementById('btn-persp-view').addEventListener('click', () => {
+      useOrtho = false;
+      activeCamera = perspCamera;
+      controls.object = perspCamera;
+      controls.update();
+    });
+
+    document.getElementById('btn-build-route').addEventListener('click', buildRoute);
+    document.getElementById('btn-clear-route').addEventListener('click', clearRoute);
+
+    document.getElementById('search-room').addEventListener('input', (e) => {
+      const q = e.target.value.trim().toLowerCase();
+      if (q.length < 1) return;
+      for (const [, data] of roomIndex) {
+        if (String(data.room.label).toLowerCase().includes(q)) {
+          document.getElementById('select-building').value = data.buildingId;
+          updateFloorSelect();
+          document.getElementById('select-floor').value = String(data.floor);
+          setSelectedBuilding(data.buildingId);
+          flyToBuilding(data.buildingId);
+          void updateFloorPlan();
+          const rf = document.getElementById('route-from');
+          rf.value = data.room.id;
+          break;
+        }
+      }
+    });
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      perspCamera.aspect = w / h;
+      perspCamera.updateProjectionMatrix();
+      const asp = w / h;
+      orthoCamera.left = (-frustumSize * asp) / 2;
+      orthoCamera.right = (frustumSize * asp) / 2;
+      orthoCamera.top = frustumSize / 2;
+      orthoCamera.bottom = -frustumSize / 2;
+      orthoCamera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      labelRenderer.setSize(w, h);
+    }
+    window.addEventListener('resize', onResize);
+
+    function animate(t) {
+      requestAnimationFrame(animate);
+      TWEEN.update(t);
+      controls.update();
+      renderer.render(scene, activeCamera);
+      labelRenderer.render(scene, activeCamera);
+    }
+
+    await loadCampus();
+    setSelectedBuilding(MODEL_CONFIG.buildings[0]?.id);
+    await updateFloorPlan();
+    animate();
+
+    // Экспорт в window для отладки в консоли
+    window.LSU_CAMPUS_DEBUG = { scene, buildingMeshes, MODEL_CONFIG };
+  </script>
+</body>
+</html>
