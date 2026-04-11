@@ -253,14 +253,8 @@
     </div>
 
     <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
-      <label>Размер и поворот корпуса</label>
-      <p class="hint" style="margin:0 0 8px 0;">Для здания из списка «Выберите здание». Меняет <code>modelScale</code> и <code>rotationY</code> в данных сцены.</p>
-      <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;">
-        <span style="opacity:0.85;font-size:12px;">Масштаб</span>
-        <button type="button" id="btn-building-scale-down" class="ghost" title="Уменьшить модель">−</button>
-        <span id="building-model-scale-readout" style="min-width:3.2em;text-align:center;font-variant-numeric:tabular-nums;">1.00</span>
-        <button type="button" id="btn-building-scale-up" class="ghost" title="Увеличить модель">+</button>
-      </div>
+      <label>Поворот корпуса</label>
+      <p class="hint" style="margin:0 0 8px 0;">Для здания из «Выберите здание». Масштаб не в интерфейсе: задайте <code>modelScale</code> у корпуса в <code>MANUAL_BUILDINGS</code> и при необходимости <code>NORMALIZED_BUILDING_MAX_DIM</code> / <code>DEFAULT_BUILDING_SCALE</code> в <code>MODEL_CONFIG</code>, затем обновите страницу.</p>
       <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;">
         <span style="opacity:0.85;font-size:12px;">Поворот (ось Y)</span>
         <button type="button" id="btn-building-rotate-ccw" class="ghost" title="Против часовой">↺</button>
@@ -282,9 +276,6 @@
         <select id="placement-target">
           <option value="campus">Корпус (список «Выберите здание»)</option>
         </select>
-        <p id="placement-district-warn" class="hint" hidden style="margin:8px 0 0;color:#fbbf24;line-height:1.35;">
-          Сейчас в gizmo выбран <strong>макет района</strong>: двигается только подложка карты, корпуса остаются на своих координатах — кажется, что «съезжает всё». Чтобы двигать <strong>одно здание</strong>, выберите «Корпус…». Макет в gizmo задаётся также <kbd>Alt</kbd>+кликом по карте.
-        </p>
       </div>
       <div class="field" id="placement-tools-2" hidden style="margin-bottom:0;">
         <label for="placement-tool">Инструмент на сцене</label>
@@ -294,7 +285,7 @@
         </select>
       </div>
       <button type="button" id="btn-copy-layout" style="margin-top:10px;">Скопировать позиции в буфер</button>
-      <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение и макет — из «Что двигать». Клик по зданию подставляет его в gizmo. <strong>Макет для gizmo</strong> — только <kbd>Alt</kbd>+клик по карте (иначе луч часто попадает в подложку и режим «ломается»). Масштаб/угол — блок выше. Orbit отключается, пока тянете gizmo.</p>
+      <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». Клик по зданию подставляет его в gizmo. Макет зафиксирован (<code>DISTRICT_MAP_*</code> в коде). Поворот — блок выше. Orbit отключается, пока тянете gizmo.</p>
     </div>
 
     <div class="toggle-row">
@@ -351,8 +342,8 @@
      * - Удалите лишние объекты или скопируйте один блок, изменив id, name, position, modelPath.
      * - disabled: true — временно скрыть корпус со сцены.
      * - modelPath: путь относительно BASE_URL (папка с HTML при serve).
-     * - modelScale: опционально, иначе берётся DEFAULT_BUILDING_SCALE; в интерфейсе — кнопки ± и копирование в буфер.
-     * - rotationY: опционально, радианы (поворот вокруг вертикали); в интерфейсе — ↺ ↻ и слайдер; после расстановки — «Скопировать позиции».
+     * - modelScale: опционально, иначе DEFAULT_BUILDING_SCALE; множитель до нормализации по NORMALIZED_BUILDING_MAX_DIM.
+     * - rotationY: опционально, радианы; в интерфейсе — ↺ ↻ и слайдер; после расстановки — «Скопировать позиции».
      * - Размер: NORMALIZE_BUILDING_SIZE + NORMALIZED_BUILDING_MAX_DIM в MODEL_CONFIG (один max-габарит у всех).
      *
      * Шаблон нового корпуса:
@@ -571,7 +562,10 @@
       FLOOR_PLAN_SCALE: 1,
       FLOOR_HEIGHT_METERS: 3.5,
       DEFAULT_BUILDING_SCALE: 1,
-      /** Одинаковый «габарит»: после загрузки модель масштабируется так, чтобы max(X,Y,Z) совпадал с этим значением */
+      /**
+       * Нормализация размера: все корпуса подгоняются под один max-габарит. Общий «крупнее/мельче» — крутите
+       * NORMALIZED_BUILDING_MAX_DIM; отдельное здание — modelScale в MANUAL_BUILDINGS. Перезагрузка страницы.
+       */
       NORMALIZE_BUILDING_SIZE: true,
       NORMALIZED_BUILDING_MAX_DIM: 18,
       /**
@@ -589,11 +583,7 @@
       DIRECTIONAL_SHADOW_BIAS: -0.00025,
       DIRECTIONAL_SHADOW_NORMAL_BIAS: 0.07,
 
-      /** Кнопки ± масштаба корпуса: шаг к modelScale */
-      PLACEMENT_MODEL_SCALE_STEP: 0.1,
-      PLACEMENT_MODEL_SCALE_MIN: 0.25,
-      PLACEMENT_MODEL_SCALE_MAX: 4,
-      /** Кнопки ↺ ↻: шаг поворота вокруг Y (градусы) */
+      /** Кнопки ↺ ↻ и слайдер: шаг поворота вокруг Y (градусы) */
       PLACEMENT_MODEL_ROTATE_STEP_DEG: 5,
 
       /**
@@ -624,6 +614,11 @@
       DISTRICT_MAP_AUTO_FIT_POST_SCALE: 1.85,
       DISTRICT_MAP_POSITION: { x: 0, y: 0, z: 0 },
       DISTRICT_MAP_ROTATION_Y: 0,
+      /**
+       * true — макет не в gizmo и не в raycast (клики идут сквозь к корпусам). Подстройка: DISTRICT_MAP_*
+       * в этом файле и перезагрузка. false — макет снова участвует в попаданиях луча (gizmo для макета в UI не возвращён).
+       */
+      DISTRICT_MAP_SCENE_LOCKED: true,
       /** Опустить макет по bbox, чтобы «низ» модели стоял на y = 0 */
       DISTRICT_MAP_GROUND_ALIGN: true,
       DISTRICT_MAP_CAST_SHADOW: false,
@@ -686,15 +681,43 @@
       return mesh;
     }
 
+    const _tmpBox3 = new THREE.Box3();
+
+    /** Запасной AABB по геометрии мешей (если setFromObject дал пустой бокс — модель «пропадает»). */
+    function expandWorldBoxFromMeshes(root, box) {
+      box.makeEmpty();
+      root.updateMatrixWorld(true);
+      let any = false;
+      root.traverse((o) => {
+        if (o.visible === false) return;
+        if (!o.isMesh || !o.geometry) return;
+        const g = o.geometry;
+        if (g.boundingBox == null) g.computeBoundingBox();
+        if (!g.boundingBox || g.boundingBox.isEmpty()) return;
+        _tmpBox3.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+        if (!_tmpBox3.isEmpty()) {
+          box.union(_tmpBox3);
+          any = true;
+        }
+      });
+      return any;
+    }
+
     /**
      * Масштаб и смещение модели внутри корня: низ на земле, центр по горизонтали у оси корня.
      * normOpts: { skip: true } — без нормализации по габариту; { maxDim: N } — свой целевой max-габарит.
+     * @returns {boolean} false — габариты не удалось вычислить (вызывающий может откатить масштаб).
      */
     function fitBuildingModelToRoot(sceneModel, normOpts) {
-      const box = new THREE.Box3().setFromObject(sceneModel);
+      sceneModel.updateMatrixWorld(true);
+      let box = new THREE.Box3().setFromObject(sceneModel, true);
       if (box.isEmpty()) {
-        console.warn('[LSU Nav] fitBuildingModelToRoot: пустой bbox, пропуск подгонки');
-        return;
+        const fb = new THREE.Box3();
+        if (expandWorldBoxFromMeshes(sceneModel, fb) && !fb.isEmpty()) box.copy(fb);
+      }
+      if (box.isEmpty()) {
+        console.warn('[LSU Nav] fitBuildingModelToRoot: пустой bbox');
+        return false;
       }
       const size = box.getSize(new THREE.Vector3());
       const maxD = Math.max(size.x, size.y, size.z, 1e-6);
@@ -706,11 +729,30 @@
         doNorm = true;
       }
       if (doNorm) {
-        sceneModel.scale.multiplyScalar(target / maxD);
+        const raw = target / maxD;
+        const factor = THREE.MathUtils.clamp(raw, 0.002, 400);
+        sceneModel.scale.multiplyScalar(factor);
       }
-      const box2 = new THREE.Box3().setFromObject(sceneModel);
+      sceneModel.updateMatrixWorld(true);
+      let box2 = new THREE.Box3().setFromObject(sceneModel, true);
+      if (box2.isEmpty()) {
+        const fb2 = new THREE.Box3();
+        if (expandWorldBoxFromMeshes(sceneModel, fb2) && !fb2.isEmpty()) box2.copy(fb2);
+      }
+      if (box2.isEmpty()) {
+        console.warn('[LSU Nav] fitBuildingModelToRoot: пустой bbox после нормализации');
+        return false;
+      }
       const center = box2.getCenter(new THREE.Vector3());
-      sceneModel.position.set(-center.x, -box2.min.y, -center.z);
+      const px = -center.x;
+      const py = -box2.min.y;
+      const pz = -center.z;
+      if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) {
+        console.warn('[LSU Nav] fitBuildingModelToRoot: нечисловые координаты центра');
+        return false;
+      }
+      sceneModel.position.set(px, py, pz);
+      return true;
     }
 
     /** DoubleSide для проблемных GLB; shadowSide — чтобы тени не ломались на двусторонних мешах */
@@ -786,10 +828,8 @@
       });
     }
 
-    /** Ссылка на загруженный макет района (для отладки); клики по нему не выбирают корпус */
+    /** Ссылка на загруженный макет района (для отладки) */
     let districtMapObject = null;
-    /** root.position.y сразу после выравнивания по земле, до добавления DISTRICT_MAP_POSITION (для синхронизации gizmo) */
-    let districtMapYAfterGroundAlign = 0;
 
     function computeCampusHorizontalMaxXZ() {
       const list = MODEL_CONFIG.buildings;
@@ -856,7 +896,6 @@
         root.position.y -= box.min.y;
         root.updateMatrixWorld(true);
       }
-      districtMapYAfterGroundAlign = root.position.y;
       const p = MODEL_CONFIG.DISTRICT_MAP_POSITION || { x: 0, y: 0, z: 0 };
       root.position.x += p.x ?? 0;
       root.position.y += p.y ?? 0;
@@ -869,14 +908,19 @@
         root.position.z -= cPivot.z;
         root.updateMatrixWorld(true);
       }
-      root.userData.isDistrictMapRoot = true;
       const cast = MODEL_CONFIG.DISTRICT_MAP_CAST_SHADOW === true;
       const recv = MODEL_CONFIG.DISTRICT_MAP_RECEIVE_SHADOW !== false;
+      const mapLocked = MODEL_CONFIG.DISTRICT_MAP_SCENE_LOCKED !== false;
       root.traverse((o) => {
         if (o.isMesh) {
           o.castShadow = cast;
           o.receiveShadow = recv;
-          o.userData.isDistrictMap = true;
+        }
+        if (
+          mapLocked &&
+          (o.isMesh || o.isLine || o.isLineSegments || o.isPoints || o.isSprite)
+        ) {
+          o.raycast = function () {};
         }
       });
       scene.add(root);
@@ -945,8 +989,7 @@
     transformControls.addEventListener('change', () => {
       const obj = transformControls.object;
       if (!obj) return;
-      if (obj.userData.isDistrictMapRoot) syncDistrictMapFromRoot(obj);
-      else if (obj.userData.isSurrounding) syncContextFromRoot(obj);
+      if (obj.userData.isSurrounding) syncContextFromRoot(obj);
       else if (obj.userData.buildingId) syncBuildingFromRoot(obj);
     });
 
@@ -966,18 +1009,6 @@
 
     let placementMode = false;
 
-    function syncDistrictMapFromRoot(root) {
-      if (!root || !root.userData.isDistrictMapRoot) return;
-      if (!MODEL_CONFIG.DISTRICT_MAP_POSITION) {
-        MODEL_CONFIG.DISTRICT_MAP_POSITION = { x: 0, y: 0, z: 0 };
-      }
-      const p = MODEL_CONFIG.DISTRICT_MAP_POSITION;
-      p.x = root.position.x;
-      p.z = root.position.z;
-      p.y = root.position.y - districtMapYAfterGroundAlign;
-      MODEL_CONFIG.DISTRICT_MAP_ROTATION_Y = root.rotation.y;
-    }
-
     function refreshTransformAttachment() {
       if (!placementMode) {
         transformControls.detach();
@@ -986,9 +1017,7 @@
       const pt = document.getElementById('placement-target');
       const val = pt && pt.value;
       let root = null;
-      if (val === 'district') {
-        root = districtMapObject;
-      } else if (val && val.startsWith('context:')) {
+      if (val && val.startsWith('context:')) {
         const cid = val.slice('context:'.length);
         root = contextBuildingMeshes.get(cid);
       } else {
@@ -1004,22 +1033,6 @@
       transformControls.attach(root);
       applyPlacementToolMode(document.getElementById('placement-tool').value);
       transformControls.updateMatrixWorld();
-    }
-
-    function updatePlacementDistrictWarning() {
-      const warn = document.getElementById('placement-district-warn');
-      const sel = document.getElementById('placement-target');
-      if (!warn || !sel) return;
-      warn.hidden = sel.value !== 'district';
-    }
-
-    /** Кнопки масштаба/поворота корпуса не должны совпадать с режимом «макет» — иначе кажется, что ломается всё. */
-    function ensureGizmoTargetCampusWhenEditingBuilding() {
-      const sel = document.getElementById('placement-target');
-      if (!sel || sel.value !== 'district') return;
-      sel.value = 'campus';
-      updatePlacementDistrictWarning();
-      if (placementMode) refreshTransformAttachment();
     }
 
     function syncContextFromRoot(root) {
@@ -1046,15 +1059,13 @@
       if (!sel) return;
       const cur = sel.value;
       sel.innerHTML =
-        '<option value="campus">Корпус (список «Выберите здание» выше)</option>' +
-        '<option value="district">Макет района (карта GLB)</option>';
+        '<option value="campus">Корпус (список «Выберите здание» выше)</option>';
       (MODEL_CONFIG.contextBuildings || []).forEach((c) => {
         sel.add(
           new Option(`Окружение: ${c.name || c.id}`, `context:${c.id}`)
         );
       });
       if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-      updatePlacementDistrictWarning();
     }
 
     function updateBuildingLabel(bid) {
@@ -1074,28 +1085,6 @@
       b.entranceWorld.z = b.position.z + ox * Math.sin(r) + oz * Math.cos(r);
     }
 
-    function refitBuildingVisualForBuilding(b) {
-      const root = buildingMeshes.get(b.id);
-      const vis = root && root.userData.buildingVisual;
-      if (!root || !vis) return;
-      vis.scale.set(1, 1, 1);
-      vis.position.set(0, 0, 0);
-      vis.rotation.set(0, 0, 0);
-      const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
-      vis.scale.setScalar(sc);
-      fitBuildingModelToRoot(vis);
-      vis.updateMatrixWorld(true);
-      root.updateMatrixWorld(true);
-      updateBuildingLabel(b.id);
-      if (placementMode && transformControls.object === root) {
-        const tool = document.getElementById('placement-tool')?.value || 'translate';
-        transformControls.detach();
-        transformControls.attach(root);
-        applyPlacementToolMode(tool);
-        transformControls.updateMatrixWorld();
-      }
-    }
-
     let buildingRotateSliderSilent = false;
 
     function normalizeBuildingRotationDeg(deg) {
@@ -1105,15 +1094,13 @@
       return d;
     }
 
-    function updateBuildingScaleRotationReadout() {
+    function updateBuildingRotationReadout() {
       const bid = document.getElementById('select-building').value;
       const b = buildingDataById.get(bid);
-      const scaleEl = document.getElementById('building-model-scale-readout');
       const rotEl = document.getElementById('building-rotation-readout');
       const slider = document.getElementById('building-rotate-slider');
-      if (!scaleEl || !rotEl) return;
+      if (!rotEl) return;
       if (!b) {
-        scaleEl.textContent = '—';
         rotEl.textContent = '—';
         if (slider) {
           slider.disabled = true;
@@ -1124,8 +1111,6 @@
         return;
       }
       if (slider) slider.disabled = false;
-      const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
-      scaleEl.textContent = sc.toFixed(2);
       const deg = normalizeBuildingRotationDeg(((b.rotationY || 0) * 180) / Math.PI);
       rotEl.textContent = `${deg.toFixed(0)}°`;
       if (slider) {
@@ -1135,33 +1120,7 @@
       }
     }
 
-    function applySelectedBuildingModelScaleDelta(delta) {
-      ensureGizmoTargetCampusWhenEditingBuilding();
-      const bid = document.getElementById('select-building').value;
-      const b = buildingDataById.get(bid);
-      if (!b || !buildingMeshes.get(bid)?.userData.buildingVisual) return;
-      const step =
-        Number(MODEL_CONFIG.PLACEMENT_MODEL_SCALE_STEP) > 0
-          ? MODEL_CONFIG.PLACEMENT_MODEL_SCALE_STEP
-          : 0.1;
-      const minS = Number(MODEL_CONFIG.PLACEMENT_MODEL_SCALE_MIN) || 0.25;
-      const maxS = Number(MODEL_CONFIG.PLACEMENT_MODEL_SCALE_MAX) || 4;
-      const old = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
-      const d = delta * step;
-      const nw = THREE.MathUtils.clamp(old + d, minS, maxS);
-      if (Math.abs(nw - old) < 1e-8) return;
-      const ratio = nw / old;
-      b._entranceOffset.x *= ratio;
-      b._entranceOffset.z *= ratio;
-      b.modelScale = nw;
-      refitBuildingVisualForBuilding(b);
-      recomputeEntranceWorldFromOffset(b);
-      updateBuildingScaleRotationReadout();
-      if (currentFloorBuildingId === bid) void updateFloorPlan();
-    }
-
     function applySelectedBuildingRotationDelta(deltaRad) {
-      ensureGizmoTargetCampusWhenEditingBuilding();
       const bid = document.getElementById('select-building').value;
       const root = buildingMeshes.get(bid);
       const b = buildingDataById.get(bid);
@@ -1171,13 +1130,12 @@
       root.rotation.y = b.rotationY;
       recomputeEntranceWorldFromOffset(b);
       updateBuildingLabel(bid);
-      updateBuildingScaleRotationReadout();
+      updateBuildingRotationReadout();
       if (placementMode) refreshTransformAttachment();
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
 
     function setSelectedBuildingRotationFromSliderDeg(deg) {
-      ensureGizmoTargetCampusWhenEditingBuilding();
       const bid = document.getElementById('select-building').value;
       const root = buildingMeshes.get(bid);
       const b = buildingDataById.get(bid);
@@ -1187,7 +1145,7 @@
       root.rotation.y = b.rotationY;
       recomputeEntranceWorldFromOffset(b);
       updateBuildingLabel(bid);
-      updateBuildingScaleRotationReadout();
+      updateBuildingRotationReadout();
       if (placementMode) refreshTransformAttachment();
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
@@ -1202,7 +1160,7 @@
       b.rotationY = root.rotation.y;
       recomputeEntranceWorldFromOffset(b);
       updateBuildingLabel(bid);
-      updateBuildingScaleRotationReadout();
+      updateBuildingRotationReadout();
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
 
@@ -1495,8 +1453,11 @@
         let sceneModel = await loadGLB(url, b.id, 'building');
         if (sceneModel) {
           const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
-          sceneModel.scale.setScalar(sc);
-          fitBuildingModelToRoot(sceneModel);
+          sceneModel.scale.setScalar(Math.max(1e-5, sc));
+          const fitOk = fitBuildingModelToRoot(sceneModel);
+          if (!fitOk) {
+            console.warn(`[LSU Nav] Подгонка габарита не удалась для «${b.name}»`);
+          }
           sceneModel.traverse((o) => {
             if (o.isMesh) {
               o.castShadow = true;
@@ -1515,7 +1476,10 @@
           );
           const fallback = createFallbackBuildingMesh(b.id, palette[i % palette.length]);
           root.add(fallback);
-          fitBuildingModelToRoot(fallback);
+          const fitOkFb = fitBuildingModelToRoot(fallback);
+          if (!fitOkFb) {
+            console.warn(`[LSU Nav] Подгонка габарита не удалась (заглушка «${b.name}»)`);
+          }
           root.userData.buildingVisual = fallback;
         }
 
@@ -1740,8 +1704,7 @@
       showBuildingInfo(bid);
       const pt = document.getElementById('placement-target');
       if (pt) pt.value = 'campus';
-      updatePlacementDistrictWarning();
-      updateBuildingScaleRotationReadout();
+      updateBuildingRotationReadout();
       refreshTransformAttachment();
     }
 
@@ -1764,12 +1727,8 @@
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
 
-    /**
-     * Среди попаданий луча сначала учитываем корпус/окружение (ближе по distance), иначе часто
-     * выигрывает огромная подложка макета — gizmo переключается «само» и кажется баг масштаба/позиции.
-     */
+    /** Первое попадание по корпусу или окружению (макет в луч не попадает — raycast отключён). */
     function classifySceneHitFromRay(hits) {
-      let district = false;
       for (let i = 0; i < hits.length; i++) {
         let o = hits[i].object;
         while (o) {
@@ -1777,14 +1736,10 @@
           if (bid && buildingMeshes.has(bid)) return { kind: 'building', bid };
           const sid = o.userData?.surroundingId;
           if (sid && contextDataById.has(sid)) return { kind: 'context', sid };
-          if (o.userData?.isDistrictMap) {
-            district = true;
-            break;
-          }
           o = o.parent;
         }
       }
-      return district ? { kind: 'district' } : null;
+      return null;
     }
 
     function onPointerDown(ev) {
@@ -1794,27 +1749,10 @@
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, activeCamera);
       const roots = [...buildingMeshes.values(), ...contextBuildingMeshes.values()];
-      const mapPick = districtMapObject ? [districtMapObject] : [];
-      const hits = raycaster.intersectObjects([...roots, ...mapPick], true);
+      const hits = raycaster.intersectObjects(roots, true);
       if (!hits.length) return;
       const pick = classifySceneHitFromRay(hits);
       if (!pick) return;
-
-      if (pick.kind === 'district') {
-        if (placementMode && districtMapObject && ev.altKey) {
-          const pt = document.getElementById('placement-target');
-          if (pt && [...pt.options].some((o) => o.value === 'district')) {
-            pt.value = 'district';
-            updatePlacementDistrictWarning();
-            refreshTransformAttachment();
-            appendInfo(
-              'Gizmo: <strong>макет района</strong> (<kbd>Alt</kbd>+клик). Сдвиг XZ / поворот Y; «Скопировать позиции» — <code>DISTRICT_MAP_*</code>.',
-              false
-            );
-          }
-        }
-        return;
-      }
 
       if (pick.kind === 'context') {
         const sid = pick.sid;
@@ -1830,7 +1768,6 @@
         const pt = document.getElementById('placement-target');
         if (pt && [...pt.options].some((opt) => opt.value === `context:${sid}`)) {
           pt.value = `context:${sid}`;
-          updatePlacementDistrictWarning();
         }
         if (placementMode) refreshTransformAttachment();
         return;
@@ -1855,12 +1792,6 @@
       void updateFloorPlan();
     });
 
-    document.getElementById('btn-building-scale-down').addEventListener('click', () => {
-      applySelectedBuildingModelScaleDelta(-1);
-    });
-    document.getElementById('btn-building-scale-up').addEventListener('click', () => {
-      applySelectedBuildingModelScaleDelta(1);
-    });
     document.getElementById('btn-building-rotate-ccw').addEventListener('click', () => {
       const stepDeg = Number(MODEL_CONFIG.PLACEMENT_MODEL_ROTATE_STEP_DEG) || 5;
       applySelectedBuildingRotationDelta((stepDeg * Math.PI) / 180);
@@ -1904,13 +1835,11 @@
       } else {
         const pt = document.getElementById('placement-target');
         if (pt) pt.value = 'campus';
-        updatePlacementDistrictWarning();
         refreshTransformAttachment();
       }
     });
 
     document.getElementById('placement-target').addEventListener('change', () => {
-      updatePlacementDistrictWarning();
       if (placementMode) refreshTransformAttachment();
     });
 
@@ -1964,7 +1893,10 @@
         await navigator.clipboard.writeText(text);
         let msg =
           'Скопировано: корпуса → в <code>MANUAL_BUILDINGS</code>; окружение → в <code>SURROUNDING_BUILDINGS</code>';
-        if (districtMapObject) msg += '; макет → <code>DISTRICT_MAP_POSITION</code> / <code>DISTRICT_MAP_ROTATION_Y</code>';
+        if (districtMapObject) {
+          msg +=
+            '; макет — текущие <code>DISTRICT_MAP_POSITION</code> / <code>DISTRICT_MAP_ROTATION_Y</code> из конфига';
+        }
         msg += '.';
         appendInfo(msg, false);
       } catch {
