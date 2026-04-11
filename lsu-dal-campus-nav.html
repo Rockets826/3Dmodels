@@ -487,7 +487,7 @@
       },
       {
         id: 'korpus-11',
-        name: 'Корпус 11',
+        name: 'Корпус 12',
         position: { x: 28, z: 62 },
         modelPath: '3D/korpus-11.glb',
         modelScale: 1,
@@ -501,7 +501,7 @@
       },
       {
         id: 'korpus-12',
-        name: 'Корпус 12',
+        name: 'Корпус Синий 1-а',
         position: { x: 84, z: 62 },
         modelPath: '3D/korpus-12.glb',
         modelScale: 1,
@@ -526,12 +526,15 @@
       NORMALIZE_BUILDING_SIZE: true,
       NORMALIZED_BUILDING_MAX_DIM: 18,
       /**
-       * «Съеденные стены» у 3 / 8 / 10: чаще всего односторонний материал + нормали наружу только с одной стороны.
-       * DoubleSide рисует обе стороны полигона (временный обход; в Blender лучше пересчитать нормали и закрыть меш).
+       * DoubleSide: обе стороны полигона (меньше «дырок» на фасадах). Для всех корпусов — BUILDING_DOUBLE_SIDE_ALL.
+       * Если поставить false, сработает только список FIX_MISSING_WALLS_BUILDING_IDS.
        */
-      FIX_MISSING_WALLS_BUILDING_IDS: ['korpus-03', 'korpus-08', 'korpus-10'],
-      /** true — двусторонний материал у всех корпусов (дороже по GPU) */
-      BUILDING_DOUBLE_SIDE_ALL: false,
+      FIX_MISSING_WALLS_BUILDING_IDS: ['korpus-03', 'korpus-08', 'korpus-10', 'korpus-12'],
+      /** Подсветка тёмных PBR у всех корпусов (как для 12-го). false — только FIX_DARK_PBR_BUILDING_IDS */
+      FIX_DARK_PBR_ALL: true,
+      FIX_DARK_PBR_BUILDING_IDS: ['korpus-12'],
+      /** Двусторонние материалы у всех корпусов (чуть тяжелее для GPU) */
+      BUILDING_DOUBLE_SIDE_ALL: true,
       /** Тени: меньше полос и «шума» на крупных фасадах */
       DIRECTIONAL_SHADOW_MAP_SIZE: 4096,
       DIRECTIONAL_SHADOW_BIAS: -0.00025,
@@ -611,6 +614,42 @@
         if (!m || m.side === undefined) return;
         m.side = THREE.DoubleSide;
         if ('shadowSide' in m) m.shadowSide = THREE.DoubleSide;
+        m.needsUpdate = true;
+      });
+    }
+
+    function fixTooDarkMaterialsForMesh(mesh, buildingId) {
+      const all = MODEL_CONFIG.FIX_DARK_PBR_ALL === true;
+      const ids = MODEL_CONFIG.FIX_DARK_PBR_BUILDING_IDS || [];
+      if (!mesh.isMesh || !mesh.material) return;
+      if (!all && !ids.includes(buildingId)) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach((m) => {
+        if (!m) return;
+        if (m.color && typeof m.color.getHSL === 'function') {
+          const hsl = { h: 0, s: 0, l: 0 };
+          m.color.getHSL(hsl);
+          if (hsl.l < 0.2) {
+            const nl = THREE.MathUtils.clamp(hsl.l + 0.3, 0.24, 0.52);
+            m.color.setHSL(hsl.h, THREE.MathUtils.clamp(hsl.s * 0.9 + 0.06, 0, 1), nl);
+          }
+        }
+        if ('metalness' in m && m.metalness !== undefined) {
+          m.metalness = THREE.MathUtils.clamp(m.metalness * 0.45, 0, 0.4);
+        }
+        if ('roughness' in m && m.roughness !== undefined) {
+          m.roughness = Math.max(0.36, m.roughness);
+        }
+        if ('envMapIntensity' in m && m.envMapIntensity !== undefined && m.envMapIntensity < 0.2) {
+          m.envMapIntensity = Math.max(0.35, m.envMapIntensity);
+        }
+        if (m.emissive && 'emissiveIntensity' in m && m.color) {
+          if (m.emissiveIntensity === undefined) m.emissiveIntensity = 0;
+          if (m.emissiveIntensity < 0.06) {
+            m.emissive.copy(m.color);
+            m.emissiveIntensity = 0.05;
+          }
+        }
         m.needsUpdate = true;
       });
     }
@@ -1044,6 +1083,7 @@
               o.castShadow = true;
               o.receiveShadow = true;
               fixBuildingMaterialsForMesh(o, b.id);
+              fixTooDarkMaterialsForMesh(o, b.id);
             }
             o.userData.buildingId = b.id;
           });
