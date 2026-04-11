@@ -252,6 +252,23 @@
       <select id="select-floor"></select>
     </div>
 
+    <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
+      <label>Расстановка корпусов (gizmo)</label>
+      <div class="toggle-row">
+        <span>Включить перемещение и поворот</span>
+        <input type="checkbox" id="toggle-placement-mode" />
+      </div>
+      <div class="field" id="placement-tools" hidden style="margin-bottom:0;">
+        <label for="placement-tool">Инструмент на сцене</label>
+        <select id="placement-tool">
+          <option value="translate">Перемещение (по земле XZ)</option>
+          <option value="rotate">Поворот вокруг вертикали (Y)</option>
+        </select>
+      </div>
+      <button type="button" id="btn-copy-layout" style="margin-top:10px;">Скопировать позиции в буфер</button>
+      <p class="hint" style="margin-top:8px;margin-bottom:0;">Выберите корпус, включите режим: стрелки — двигать, дуга — крутить. Камера (Orbit) отключается, пока тянете gizmo.</p>
+    </div>
+
     <div class="toggle-row">
       <span>Показать схему этажа (2D GLB)</span>
       <input type="checkbox" id="toggle-floor-plan" checked />
@@ -286,6 +303,7 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { TransformControls } from 'three/addons/controls/TransformControls.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
     import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
@@ -306,12 +324,15 @@
      * - disabled: true — временно скрыть корпус со сцены.
      * - modelPath: путь относительно BASE_URL (папка с HTML при serve).
      * - modelScale: опционально, иначе берётся DEFAULT_BUILDING_SCALE.
+     * - rotationY: опционально, радианы (поворот вокруг вертикали); после расстановки — кнопка «Скопировать позиции».
+     * - Размер: NORMALIZE_BUILDING_SIZE + NORMALIZED_BUILDING_MAX_DIM в MODEL_CONFIG (один max-габарит у всех).
      *
      * Шаблон нового корпуса:
      * {
      *   id: 'uniq-id',
      *   name: 'Название',
      *   position: { x: 0, z: 0 },
+     *   rotationY: 0,
      *   modelPath: '3D/file.glb',
      *   modelScale: 1,
      *   disabled: false,
@@ -500,7 +521,10 @@
       FLOOR_PLAN_Y_OFFSET: 28,
       FLOOR_PLAN_SCALE: 1,
       FLOOR_HEIGHT_METERS: 3.5,
-      DEFAULT_BUILDING_SCALE: 1
+      DEFAULT_BUILDING_SCALE: 1,
+      /** Одинаковый «габарит»: после загрузки модель масштабируется так, чтобы max(X,Y,Z) совпадал с этим значением */
+      NORMALIZE_BUILDING_SIZE: true,
+      NORMALIZED_BUILDING_MAX_DIM: 18
     };
 
     const container = document.getElementById('canvas-wrap');
@@ -532,9 +556,11 @@
       }
     }
 
-    /** Резервный «корпус», если GLB не загрузился */
-    function createFallbackBuildingMesh(building, color) {
-      const w = 12, h = 14, d = 10;
+    /** Резервный «корпус» в локальных координатах корня (центр по XZ, низ на y=0) */
+    function createFallbackBuildingMesh(buildingId, color) {
+      const w = 12,
+        h = 14,
+        d = 10;
       const geo = new THREE.BoxGeometry(w, h, d);
       const mat = new THREE.MeshStandardMaterial({
         color: color || 0x6b7c8c,
@@ -542,10 +568,24 @@
         roughness: 0.75
       });
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(building.position.x, h / 2, building.position.z);
+      mesh.position.set(0, h / 2, 0);
       mesh.userData.isFallback = true;
-      mesh.userData.buildingId = building.id;
+      mesh.userData.buildingId = buildingId;
       return mesh;
+    }
+
+    /** Масштаб и смещение модели внутри корня: низ на земле, центр по горизонтали у оси корня */
+    function fitBuildingModelToRoot(sceneModel) {
+      const box = new THREE.Box3().setFromObject(sceneModel);
+      const size = box.getSize(new THREE.Vector3());
+      const maxD = Math.max(size.x, size.y, size.z, 1e-6);
+      if (MODEL_CONFIG.NORMALIZE_BUILDING_SIZE) {
+        const target = MODEL_CONFIG.NORMALIZED_BUILDING_MAX_DIM;
+        sceneModel.scale.multiplyScalar(target / maxD);
+      }
+      const box2 = new THREE.Box3().setFromObject(sceneModel);
+      const center = box2.getCenter(new THREE.Vector3());
+      sceneModel.position.set(-center.x, -box2.min.y, -center.z);
     }
 
     function loadGLB(url, buildingId, kind) {
@@ -615,6 +655,76 @@
     controls.maxDistance = 400;
     controls.target.set(0, 8, 0);
 
+    const transformControls = new TransformControls(activeCamera, renderer.domElement);
+    transformControls.setSpace('world');
+    transformControls.size = 1.15;
+    scene.add(transformControls);
+
+    transformControls.addEventListener('dragging-changed', (e) => {
+      controls.enabled = !e.value;
+    });
+    transformControls.addEventListener('change', () => {
+      const obj = transformControls.object;
+      if (obj && obj.userData.buildingId) syncBuildingFromRoot(obj);
+    });
+
+    function applyPlacementToolMode(mode) {
+      if (mode === 'translate') {
+        transformControls.setMode('translate');
+        transformControls.showX = true;
+        transformControls.showY = false;
+        transformControls.showZ = true;
+      } else {
+        transformControls.setMode('rotate');
+        transformControls.showX = false;
+        transformControls.showY = true;
+        transformControls.showZ = false;
+      }
+    }
+
+    let placementMode = false;
+
+    function refreshTransformAttachment() {
+      if (!placementMode || !selectedBuildingId) {
+        transformControls.detach();
+        return;
+      }
+      const root = buildingMeshes.get(selectedBuildingId);
+      if (root) {
+        transformControls.camera = activeCamera;
+        transformControls.attach(root);
+        applyPlacementToolMode(document.getElementById('placement-tool').value);
+      }
+    }
+
+    function updateBuildingLabel(bid) {
+      const label = buildingLabels.get(bid);
+      const root = buildingMeshes.get(bid);
+      if (!label || !root) return;
+      const box = new THREE.Box3().setFromObject(root);
+      const y = !box.isEmpty() ? box.max.y + 2 : 18;
+      label.position.set(root.position.x, y, root.position.z);
+    }
+
+    function syncBuildingFromRoot(root) {
+      const bid = root.userData.buildingId;
+      const b = buildingDataById.get(bid);
+      if (!b) return;
+      b.position.x = root.position.x;
+      b.position.z = root.position.z;
+      if (b.rotationY === undefined) b.rotationY = 0;
+      b.rotationY = root.rotation.y;
+      const r = b.rotationY;
+      const ox = b._entranceOffset.x;
+      const oz = b._entranceOffset.z;
+      const rx = ox * Math.cos(r) - oz * Math.sin(r);
+      const rz = ox * Math.sin(r) + oz * Math.cos(r);
+      b.entranceWorld.x = b.position.x + rx;
+      b.entranceWorld.z = b.position.z + rz;
+      updateBuildingLabel(bid);
+      if (currentFloorBuildingId === bid) void updateFloorPlan();
+    }
+
     // --- Lights & environment ---
     scene.background = new THREE.Color(0x87b8e0);
     const hemi = new THREE.HemisphereLight(0xdfefff, 0x3d4f5c, 0.55);
@@ -653,8 +763,10 @@
     scene.add(grid);
 
     // --- Building registry ---
-    const buildingMeshes = new Map(); // id -> root Object3D
+    const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
+    const buildingLabels = new Map(); // id -> CSS2DObject
     const buildingDataById = new Map();
+    let selectedBuildingId = null;
     const originalMaterials = new WeakMap();
 
     function storeOriginalMaterials(root) {
@@ -692,8 +804,6 @@
         }
       });
     }
-
-    let selectedBuildingId = null;
 
     const floorPlanRoot = new THREE.Group();
     scene.add(floorPlanRoot);
@@ -883,15 +993,22 @@
 
       for (let i = 0; i < MODEL_CONFIG.buildings.length; i++) {
         const b = MODEL_CONFIG.buildings[i];
+        if (b.rotationY === undefined) b.rotationY = 0;
         buildingDataById.set(b.id, b);
+        b._entranceOffset = {
+          x: b.entranceWorld.x - b.position.x,
+          z: b.entranceWorld.z - b.position.z
+        };
+
         const url = resolveModelPath(b.modelPath);
-        const group = new THREE.Group();
-        group.userData.buildingId = b.id;
+        const root = new THREE.Group();
+        root.userData.buildingId = b.id;
 
         let sceneModel = await loadGLB(url, b.id, 'building');
         if (sceneModel) {
           const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
           sceneModel.scale.setScalar(sc);
+          fitBuildingModelToRoot(sceneModel);
           sceneModel.traverse((o) => {
             if (o.isMesh) {
               o.castShadow = true;
@@ -899,32 +1016,27 @@
             }
             o.userData.buildingId = b.id;
           });
-          // Центрируем модель горизонтально у позиции кампуса
-          const box = new THREE.Box3().setFromObject(sceneModel);
-          const center = box.getCenter(new THREE.Vector3());
-          sceneModel.position.set(
-            b.position.x - center.x,
-            -box.min.y,
-            b.position.z - center.z
-          );
-          group.add(sceneModel);
+          root.add(sceneModel);
         } else {
           fallbackCount++;
           console.warn(
             `[LSU Nav] Модель не найдена, используется временная геометрия для «${b.name}»`
           );
-          const fallback = createFallbackBuildingMesh(b, palette[i % palette.length]);
-          group.add(fallback);
+          const fallback = createFallbackBuildingMesh(b.id, palette[i % palette.length]);
+          root.add(fallback);
+          fitBuildingModelToRoot(fallback);
         }
 
-        group.userData.buildingId = b.id;
-        group.traverse((o) => {
+        root.position.set(b.position.x, 0, b.position.z);
+        root.rotation.y = b.rotationY;
+
+        root.traverse((o) => {
           o.userData.buildingId = b.id;
         });
 
-        storeOriginalMaterials(group);
-        scene.add(group);
-        buildingMeshes.set(b.id, group);
+        storeOriginalMaterials(root);
+        scene.add(root);
+        buildingMeshes.set(b.id, root);
 
         const div = document.createElement('div');
         div.className = 'building-label';
@@ -935,8 +1047,9 @@
         div.style.textShadow = '0 1px 4px #000';
         div.style.pointerEvents = 'none';
         const label = new CSS2DObject(div);
-        label.position.set(b.position.x, 16, b.position.z);
+        buildingLabels.set(b.id, label);
         scene.add(label);
+        updateBuildingLabel(b.id);
       }
       if (fallbackCount === 0 && window.location.protocol !== 'file:') {
         warnEl.hidden = true;
@@ -1062,6 +1175,7 @@
         highlightBuilding(buildingMeshes.get(bid), true);
       }
       showBuildingInfo(bid);
+      refreshTransformAttachment();
     }
 
     function flyToBuilding(bid) {
@@ -1131,10 +1245,50 @@
         .start();
     });
 
+    document.getElementById('toggle-placement-mode').addEventListener('change', (e) => {
+      placementMode = e.target.checked;
+      document.getElementById('placement-tools').hidden = !placementMode;
+      if (!placementMode) {
+        transformControls.detach();
+        controls.enabled = true;
+      } else {
+        refreshTransformAttachment();
+      }
+    });
+
+    document.getElementById('placement-tool').addEventListener('change', (e) => {
+      if (placementMode && transformControls.object) {
+        applyPlacementToolMode(e.target.value);
+      }
+    });
+
+    document.getElementById('btn-copy-layout').addEventListener('click', async () => {
+      const lines = MODEL_CONFIG.buildings.map((b) => {
+        const deg = ((((b.rotationY || 0) * 180) / Math.PI).toFixed(1));
+        return (
+          `  // ${b.name} (${b.id})\n` +
+          `  position: { x: ${b.position.x.toFixed(2)}, z: ${b.position.z.toFixed(2)} },\n` +
+          `  rotationY: ${(b.rotationY || 0).toFixed(5)}, // ${deg}°\n` +
+          `  entranceWorld: { x: ${b.entranceWorld.x.toFixed(2)}, y: ${b.entranceWorld.y.toFixed(2)}, z: ${b.entranceWorld.z.toFixed(2)} },`
+        );
+      });
+      const text = lines.join('\n\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        appendInfo(
+          'Фрагменты для вставки в <code>MANUAL_BUILDINGS</code> скопированы в буфер. Добавьте в каждый объект поле <code>rotationY</code>, если его ещё нет.',
+          false
+        );
+      } catch {
+        window.prompt('Скопируйте вручную (Ctrl+C):', text);
+      }
+    });
+
     document.getElementById('btn-top-view').addEventListener('click', () => {
       useOrtho = true;
       activeCamera = orthoCamera;
       controls.object = orthoCamera;
+      transformControls.camera = orthoCamera;
       const bid = document.getElementById('select-building').value;
       const b = buildingDataById.get(bid);
       const cx = b ? b.position.x : 0;
@@ -1149,6 +1303,7 @@
       useOrtho = false;
       activeCamera = perspCamera;
       controls.object = perspCamera;
+      transformControls.camera = perspCamera;
       controls.update();
     });
 
@@ -1203,7 +1358,7 @@
     animate();
 
     // Экспорт в window для отладки в консоли
-    window.LSU_CAMPUS_DEBUG = { scene, buildingMeshes, MODEL_CONFIG };
+    window.LSU_CAMPUS_DEBUG = { scene, buildingMeshes, MODEL_CONFIG, transformControls };
   </script>
 </body>
 </html>
