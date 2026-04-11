@@ -19,6 +19,14 @@
     #canvas-wrap {
       position: fixed;
       inset: 0;
+      overflow: hidden;
+    }
+    /* Убираем «щель» снизу (inline-canvas + выравнивание) */
+    #canvas-wrap canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      vertical-align: top;
     }
 
     #ui-root {
@@ -291,7 +299,7 @@
       </div>
       <button type="button" id="btn-copy-layout" style="margin-top:10px;">Скопировать позиции в буфер</button>
       <button type="button" id="btn-clear-saved-layout" class="ghost" style="margin-top:8px;">Сбросить сохранённую раскладку</button>
-      <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». Раскладка корпусов (место, поворот, размер) при включённом <code>PERSIST_CAMPUS_LAYOUT</code> запоминается в этом браузере. Клик по зданию подставляет его в gizmo. Макет — <code>DISTRICT_MAP_*</code>. Orbit отключается, пока тянете gizmo.</p>
+      <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». В режиме gizmo камера по умолчанию <strong>не подлетает</strong> к зданию (<code>SKIP_FLY_CAMERA_WHILE_PLACEMENT_MODE</code>). Раскладка — <code>PERSIST_CAMPUS_LAYOUT</code>. Клик по зданию выбирает его для gizmo. Макет — <code>DISTRICT_MAP_*</code>. Orbit отключается, пока тянете gizmo.</p>
     </div>
 
     <div class="toggle-row">
@@ -609,6 +617,15 @@
       PERSIST_CAMPUS_LAYOUT: true,
       /** Смените ключ, если нужен отдельный пресет (или очистка старого формата). */
       CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v1',
+      /** Подлет камеры к корпусу при выборе в списке / клике по модели */
+      FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
+      /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
+      SKIP_FLY_CAMERA_WHILE_PLACEMENT_MODE: true,
+      /** Размер зелёной плоскости и сетки (усл. ед.); при сильном отдалении мелкая плоскость даёт полосу «неба» внизу кадра */
+      GROUND_PLANE_EXTENT: 5200,
+      GRID_EXTENT: 5200,
+      /** Подложка под макет — шире охват при виде сверху с большой высоты */
+      DISTRICT_MAP_UNDERLAY_EXTENT: 9200,
 
       /**
        * Карта района одним GLB. Положите файл сюда: maket_rayona/maket_rayona.glb
@@ -748,6 +765,7 @@
       let any = false;
       root.traverse((o) => {
         if (o.visible === false) return;
+        if (o.userData && o.userData.skipCampusBounding) return;
         if (!o.isMesh || !o.geometry) return;
         const g = o.geometry;
         if (g.boundingBox == null) g.computeBoundingBox();
@@ -768,10 +786,9 @@
      */
     function fitBuildingModelToRoot(sceneModel, normOpts) {
       sceneModel.updateMatrixWorld(true);
-      let box = new THREE.Box3().setFromObject(sceneModel, true);
-      if (box.isEmpty()) {
-        const fb = new THREE.Box3();
-        if (expandWorldBoxFromMeshes(sceneModel, fb) && !fb.isEmpty()) box.copy(fb);
+      let box = new THREE.Box3();
+      if (!expandWorldBoxFromMeshes(sceneModel, box) || box.isEmpty()) {
+        box.copy(new THREE.Box3().setFromObject(sceneModel, true));
       }
       if (box.isEmpty()) {
         console.warn('[LSU Nav] fitBuildingModelToRoot: пустой bbox');
@@ -792,10 +809,9 @@
         sceneModel.scale.multiplyScalar(factor);
       }
       sceneModel.updateMatrixWorld(true);
-      let box2 = new THREE.Box3().setFromObject(sceneModel, true);
-      if (box2.isEmpty()) {
-        const fb2 = new THREE.Box3();
-        if (expandWorldBoxFromMeshes(sceneModel, fb2) && !fb2.isEmpty()) box2.copy(fb2);
+      let box2 = new THREE.Box3();
+      if (!expandWorldBoxFromMeshes(sceneModel, box2) || box2.isEmpty()) {
+        box2.copy(new THREE.Box3().setFromObject(sceneModel, true));
       }
       if (box2.isEmpty()) {
         console.warn('[LSU Nav] fitBuildingModelToRoot: пустой bbox после нормализации');
@@ -1049,8 +1065,10 @@
     }
 
     // --- Scene ---
+    const SKY_COLOR = 0x87b8e0;
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0xb8d4ea, 0.0025);
+    scene.background = new THREE.Color(SKY_COLOR);
+    scene.fog = new THREE.FogExp2(SKY_COLOR, 0.002);
 
     const perspCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 4000);
     perspCamera.position.set(160, 120, 200);
@@ -1071,11 +1089,15 @@
     let activeCamera = perspCamera;
     let useOrtho = false;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setClearColor(SKY_COLOR, 1);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.domElement.style.display = 'block';
+    renderer.domElement.style.width = '100%';
+    renderer.domElement.style.height = '100%';
     container.appendChild(renderer.domElement);
 
     const labelRenderer = new CSS2DRenderer();
@@ -1083,6 +1105,8 @@
     labelRenderer.domElement.style.position = 'absolute';
     labelRenderer.domElement.style.top = '0';
     labelRenderer.domElement.style.left = '0';
+    labelRenderer.domElement.style.width = '100%';
+    labelRenderer.domElement.style.height = '100%';
     labelRenderer.domElement.style.pointerEvents = 'none';
     container.appendChild(labelRenderer.domElement);
 
@@ -1091,7 +1115,7 @@
     controls.dampingFactor = 0.06;
     controls.maxPolarAngle = Math.PI / 2 - 0.05;
     controls.minDistance = 8;
-    controls.maxDistance = 400;
+    controls.maxDistance = 900;
     controls.target.set(0, 8, 0);
 
     const transformControls = new TransformControls(activeCamera, renderer.domElement);
@@ -1319,7 +1343,6 @@
     }
 
     // --- Lights & environment ---
-    scene.background = new THREE.Color(0x87b8e0);
     const hemi = new THREE.HemisphereLight(0xdfefff, 0x3d4f5c, 0.55);
     scene.add(hemi);
 
@@ -1342,7 +1365,8 @@
     point.position.set(-40, 30, 40);
     scene.add(point);
 
-    const groundGeo = new THREE.PlaneGeometry(1200, 1200);
+    const groundExt = Number(MODEL_CONFIG.GROUND_PLANE_EXTENT) || 5200;
+    const groundGeo = new THREE.PlaneGeometry(groundExt, groundExt);
     const groundMat = new THREE.MeshStandardMaterial({
       color: 0x3d5c45,
       metalness: 0,
@@ -1353,14 +1377,17 @@
     ground.receiveShadow = true;
     scene.add(ground);
 
-    const grid = new THREE.GridHelper(600, 60, 0x1a3320, 0x2a4a30);
+    const gridExt = Number(MODEL_CONFIG.GRID_EXTENT) || 5200;
+    const gridDivs = Math.min(200, Math.max(48, Math.round(gridExt / 26)));
+    const grid = new THREE.GridHelper(gridExt, gridDivs, 0x1a3320, 0x2a4a30);
     grid.material.opacity = 0.35;
     grid.material.transparent = true;
     scene.add(grid);
 
     const underlayCol = MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_COLOR ?? 0x3d4652;
     const underlayOp = Math.min(1, Math.max(0.15, Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_OPACITY) || 1));
-    const underlayGeo = new THREE.PlaneGeometry(3400, 3400);
+    const underlayExt = Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_EXTENT) || 9200;
+    const underlayGeo = new THREE.PlaneGeometry(underlayExt, underlayExt);
     const underlayMat = new THREE.MeshBasicMaterial({
       color: underlayCol,
       transparent: underlayOp < 0.999,
@@ -1378,7 +1405,8 @@
     mapGroundUnderlay.visible = false;
     scene.add(mapGroundUnderlay);
 
-    mapGroundGrid = new THREE.GridHelper(960, 96, 0x7a8798, 0x6a7685);
+    const mapGridSize = Math.min(2400, Math.max(960, underlayExt * 0.28));
+    mapGroundGrid = new THREE.GridHelper(mapGridSize, Math.round(mapGridSize / 10), 0x7a8798, 0x6a7685);
     const gridY = Number(MODEL_CONFIG.DISTRICT_MAP_AUX_GRID_Y);
     mapGroundGrid.position.y = Number.isFinite(gridY) ? gridY : -0.05;
     mapGroundGrid.renderOrder = -1;
@@ -2050,6 +2078,13 @@
     }
 
     function flyToBuilding(bid) {
+      if (MODEL_CONFIG.FLY_CAMERA_TO_BUILDING_ON_SELECT === false) return;
+      if (
+        placementMode &&
+        MODEL_CONFIG.SKIP_FLY_CAMERA_WHILE_PLACEMENT_MODE !== false
+      ) {
+        return;
+      }
       const b = buildingDataById.get(bid);
       if (!b) return;
       const target = new THREE.Vector3(b.position.x, 8, b.position.z);
