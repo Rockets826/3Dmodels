@@ -1,6 +1,6 @@
 # 3D-навигация по кампусу (ЛГУ)
 
-Статический сайт: `lsu-dal-campus-nav.html`, модели GLB в папке `3D/`.
+Статический сайт: `lsu-dal-campus-nav.html`, корпуса — `3D/`, макет района — `maket_rayona/maket_rayona.glb` (см. `DISTRICT_MAP_GLB` в скрипте).
 
 ## Локальный сервер
 
