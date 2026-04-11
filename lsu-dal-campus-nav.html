@@ -624,7 +624,38 @@
       DISTRICT_MAP_CAST_SHADOW: false,
       DISTRICT_MAP_RECEIVE_SHADOW: true,
       /** Спрятать зелёную плоскость и сетку, если макет успешно загрузился */
-      HIDE_DEFAULT_GROUND_WITH_MAP: true
+      HIDE_DEFAULT_GROUND_WITH_MAP: true,
+      /**
+       * Под макетом: мягкая плоскость + лёгкая сетка (вместо «пустого» неба под картой).
+       * false — как раньше, только скрытие зелёного пола.
+       */
+      DISTRICT_MAP_SHOW_UNDERLAY: true,
+      /**
+       * Подложка и вспомогательная сетка должны быть строго НИЖЕ основания макета (y ≈ 0 после GROUND_ALIGN).
+       * Если поставить их выше нуля — при виде сверху они рисуются поверх дорог (дороги «пропадают») и z-fight.
+       */
+      DISTRICT_MAP_UNDERLAY_Y: -0.12,
+      DISTRICT_MAP_AUX_GRID_Y: -0.05,
+      /** Слегка поднять весь GLB после прижатия к нулю — запас от совпадения с подложкой. */
+      DISTRICT_MAP_VERTICAL_LIFT: 0.025,
+      /** Пол под макетом: тёмнее и нейтральнее самого плана, иначе кварталы и дороги не читаются. */
+      DISTRICT_MAP_UNDERLAY_COLOR: 0x3d4652,
+      DISTRICT_MAP_UNDERLAY_OPACITY: 1,
+      /** Подогнать цвет макета под «бетон» корпусов (смешивание + те же правки PBR, что у зданий). */
+      DISTRICT_MAP_MATCH_BUILDING_TONE: true,
+      /**
+       * true — для макета тоже сработает FIX_DARK_PBR (подсветка очень тёмных материалов).
+       * Обычно false: иначе дороги «всплывают» и сливаются с застройкой.
+       */
+      DISTRICT_MAP_APPLY_DARK_PBR_FIX: false,
+      /** 0…1 — насколько подтянуть цвет поверхностей к DISTRICT_MAP_TINT_COLOR (меньше = больше контраста в GLB). */
+      DISTRICT_MAP_TINT_BLEND: 0.28,
+      /** Светло-серый с лёгким холодом, как типичные фасады после подсветки в сцене */
+      DISTRICT_MAP_TINT_COLOR: 0xb8c2cc,
+      /** Тёмные линии плана (улицы); ниже порога яркости см. DISTRICT_MAP_LINE_LUMINANCE_MAX */
+      DISTRICT_MAP_LINE_TINT_COLOR: 0x4a5562,
+      /** Выше — «тело» кварталов, ниже или равно — дороги/контуры (остаются тёмнее). */
+      DISTRICT_MAP_LINE_LUMINANCE_MAX: 0.38
     };
 
     const container = document.getElementById('canvas-wrap');
@@ -771,6 +802,46 @@
       });
     }
 
+    /** Визуально близко к корпусам: DoubleSide/PBR-правки + тонирование «тела» и линий плана. */
+    function harmonizeDistrictMapMaterials(root) {
+      if (MODEL_CONFIG.DISTRICT_MAP_MATCH_BUILDING_TONE === false) return;
+      const tint = MODEL_CONFIG.DISTRICT_MAP_TINT_COLOR ?? 0xb8c2cc;
+      const lineTint = MODEL_CONFIG.DISTRICT_MAP_LINE_TINT_COLOR ?? 0x7d8792;
+      const blend = Math.min(1, Math.max(0, Number(MODEL_CONFIG.DISTRICT_MAP_TINT_BLEND) || 0.28));
+      const tintCol = new THREE.Color(tint);
+      const lineCol = new THREE.Color(lineTint);
+      const did = 'district-map';
+      const lineLumMax = Math.min(
+        0.55,
+        Math.max(0.08, Number(MODEL_CONFIG.DISTRICT_MAP_LINE_LUMINANCE_MAX) || 0.38)
+      );
+      root.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        fixBuildingMaterialsForMesh(o, did);
+        if (MODEL_CONFIG.DISTRICT_MAP_APPLY_DARK_PBR_FIX === true) {
+          fixTooDarkMaterialsForMesh(o, did);
+        }
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => {
+          if (!m || !m.color || typeof m.color.getHSL !== 'function') return;
+          const hsl = { h: 0, s: 0, l: 0 };
+          m.color.getHSL(hsl);
+          if (hsl.l <= lineLumMax) {
+            m.color.copy(lineCol);
+          } else {
+            m.color.lerp(tintCol, blend);
+          }
+          if ('roughness' in m && m.roughness !== undefined) {
+            m.roughness = Math.max(0.8, m.roughness);
+          }
+          if ('metalness' in m && m.metalness !== undefined) {
+            m.metalness = THREE.MathUtils.clamp(m.metalness * 0.35, 0, 0.18);
+          }
+          m.needsUpdate = true;
+        });
+      });
+    }
+
     function fixTooDarkMaterialsForMesh(mesh, buildingId) {
       const all = MODEL_CONFIG.FIX_DARK_PBR_ALL === true;
       const ids = MODEL_CONFIG.FIX_DARK_PBR_BUILDING_IDS || [];
@@ -830,6 +901,9 @@
 
     /** Ссылка на загруженный макет района (для отладки) */
     let districtMapObject = null;
+    /** Подложка и сетка под макетом (показываются при успешной загрузке карты) */
+    let mapGroundUnderlay = null;
+    let mapGroundGrid = null;
 
     function computeCampusHorizontalMaxXZ() {
       const list = MODEL_CONFIG.buildings;
@@ -896,6 +970,11 @@
         root.position.y -= box.min.y;
         root.updateMatrixWorld(true);
       }
+      const liftRaw = Number(MODEL_CONFIG.DISTRICT_MAP_VERTICAL_LIFT);
+      if (Number.isFinite(liftRaw) && liftRaw !== 0) {
+        root.position.y += liftRaw;
+        root.updateMatrixWorld(true);
+      }
       const p = MODEL_CONFIG.DISTRICT_MAP_POSITION || { x: 0, y: 0, z: 0 };
       root.position.x += p.x ?? 0;
       root.position.y += p.y ?? 0;
@@ -908,6 +987,8 @@
         root.position.z -= cPivot.z;
         root.updateMatrixWorld(true);
       }
+      harmonizeDistrictMapMaterials(root);
+
       const cast = MODEL_CONFIG.DISTRICT_MAP_CAST_SHADOW === true;
       const recv = MODEL_CONFIG.DISTRICT_MAP_RECEIVE_SHADOW !== false;
       const mapLocked = MODEL_CONFIG.DISTRICT_MAP_SCENE_LOCKED !== false;
@@ -928,6 +1009,14 @@
       if (MODEL_CONFIG.HIDE_DEFAULT_GROUND_WITH_MAP === true) {
         ground.visible = false;
         grid.visible = false;
+        if (
+          MODEL_CONFIG.DISTRICT_MAP_SHOW_UNDERLAY !== false &&
+          mapGroundUnderlay &&
+          mapGroundGrid
+        ) {
+          mapGroundUnderlay.visible = true;
+          mapGroundGrid.visible = true;
+        }
       }
       endLoad();
     }
@@ -1203,6 +1292,35 @@
     grid.material.opacity = 0.35;
     grid.material.transparent = true;
     scene.add(grid);
+
+    const underlayCol = MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_COLOR ?? 0x3d4652;
+    const underlayOp = Math.min(1, Math.max(0.15, Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_OPACITY) || 1));
+    const underlayGeo = new THREE.PlaneGeometry(3400, 3400);
+    const underlayMat = new THREE.MeshBasicMaterial({
+      color: underlayCol,
+      transparent: underlayOp < 0.999,
+      opacity: underlayOp,
+      depthWrite: true,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    });
+    mapGroundUnderlay = new THREE.Mesh(underlayGeo, underlayMat);
+    mapGroundUnderlay.rotation.x = -Math.PI / 2;
+    const underlayY = Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_Y);
+    mapGroundUnderlay.position.y = Number.isFinite(underlayY) ? underlayY : -0.12;
+    mapGroundUnderlay.renderOrder = -2;
+    mapGroundUnderlay.visible = false;
+    scene.add(mapGroundUnderlay);
+
+    mapGroundGrid = new THREE.GridHelper(960, 96, 0x7a8798, 0x6a7685);
+    const gridY = Number(MODEL_CONFIG.DISTRICT_MAP_AUX_GRID_Y);
+    mapGroundGrid.position.y = Number.isFinite(gridY) ? gridY : -0.05;
+    mapGroundGrid.renderOrder = -1;
+    mapGroundGrid.material.transparent = true;
+    mapGroundGrid.material.opacity = 0.28;
+    mapGroundGrid.visible = false;
+    scene.add(mapGroundGrid);
 
     // --- Building registry ---
     const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
