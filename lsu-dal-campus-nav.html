@@ -297,6 +297,13 @@
           <option value="rotate">Поворот вокруг вертикали (Y)</option>
         </select>
       </div>
+      <div class="field" style="margin-top:8px;margin-bottom:0;">
+        <label for="district-scale-slider">Масштаб макета района</label>
+        <div class="row" style="align-items:center;gap:8px;">
+          <input type="range" id="district-scale-slider" min="0.6" max="1.8" step="0.01" value="1" />
+          <span id="district-scale-readout" style="min-width:3.6em;text-align:right;font-variant-numeric:tabular-nums;font-size:12px;">1.00×</span>
+        </div>
+      </div>
       <button type="button" id="btn-copy-layout" style="margin-top:10px;">Скопировать позиции в буфер</button>
       <button type="button" id="btn-clear-saved-layout" class="ghost" style="margin-top:8px;">Сбросить сохранённую раскладку</button>
       <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». В режиме gizmo камера по умолчанию <strong>не подлетает</strong> к зданию (<code>SKIP_FLY_CAMERA_WHILE_PLACEMENT_MODE</code>). Раскладка — <code>PERSIST_CAMPUS_LAYOUT</code>. Клик по зданию выбирает его для gizmo. Макет — <code>DISTRICT_MAP_*</code>. Orbit отключается, пока тянете gizmo.</p>
@@ -655,6 +662,10 @@
       DISTRICT_MAP_AUTO_FIT_POST_SCALE: 1.85,
       DISTRICT_MAP_POSITION: { x: 0, y: 0, z: 0 },
       DISTRICT_MAP_ROTATION_Y: 0,
+      /** Доп. множитель уже после всех авто-подгонок макета (меняется слайдером в UI). */
+      DISTRICT_MAP_UI_SCALE: 1,
+      DISTRICT_MAP_UI_SCALE_MIN: 0.6,
+      DISTRICT_MAP_UI_SCALE_MAX: 1.8,
       /**
        * true — макет не в gizmo и не в raycast (клики идут сквозь к корпусам). Подстройка: DISTRICT_MAP_*
        * в этом файле и перезагрузка. false — макет снова участвует в попаданиях луча (gizmo для макета в UI не возвращён).
@@ -944,9 +955,43 @@
 
     /** Ссылка на загруженный макет района (для отладки) */
     let districtMapObject = null;
+    let districtMapBaseScale = 1;
+    let districtMapBasePosition = new THREE.Vector3();
+    let districtMapBaseMinY = 0;
     /** Подложка и сетка под макетом (показываются при успешной загрузке карты) */
     let mapGroundUnderlay = null;
     let mapGroundGrid = null;
+
+    function clampDistrictUiScale(v) {
+      const mn = Number(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE_MIN) || 0.6;
+      const mx = Number(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE_MAX) || 1.8;
+      return THREE.MathUtils.clamp(Number(v) || 1, mn, mx);
+    }
+
+    function updateDistrictScaleReadout() {
+      const slider = document.getElementById('district-scale-slider');
+      const readout = document.getElementById('district-scale-readout');
+      if (!slider || !readout) return;
+      const v = clampDistrictUiScale(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE ?? 1);
+      slider.value = String(v);
+      readout.textContent = `${v.toFixed(2)}×`;
+      slider.disabled = !districtMapObject;
+    }
+
+    function applyDistrictMapUiScale(scaleFactor) {
+      if (!districtMapObject) return;
+      const f = clampDistrictUiScale(scaleFactor);
+      MODEL_CONFIG.DISTRICT_MAP_UI_SCALE = f;
+      districtMapObject.scale.setScalar(districtMapBaseScale * f);
+      districtMapObject.position.copy(districtMapBasePosition);
+      districtMapObject.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(districtMapObject);
+      if (!box.isEmpty()) {
+        districtMapObject.position.y += districtMapBaseMinY - box.min.y;
+        districtMapObject.updateMatrixWorld(true);
+      }
+      updateDistrictScaleReadout();
+    }
 
     function computeCampusHorizontalMaxXZ() {
       const list = MODEL_CONFIG.buildings;
@@ -1049,6 +1094,11 @@
       });
       scene.add(root);
       districtMapObject = root;
+      districtMapBaseScale = root.scale.x;
+      districtMapBasePosition.copy(root.position);
+      const baseBox = new THREE.Box3().setFromObject(root);
+      districtMapBaseMinY = baseBox.isEmpty() ? root.position.y : baseBox.min.y;
+      applyDistrictMapUiScale(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE ?? 1);
       if (MODEL_CONFIG.HIDE_DEFAULT_GROUND_WITH_MAP === true) {
         ground.visible = false;
         grid.visible = false;
@@ -2191,6 +2241,16 @@
       });
     }
 
+    const districtScaleSliderEl = document.getElementById('district-scale-slider');
+    if (districtScaleSliderEl) {
+      districtScaleSliderEl.min = String(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE_MIN ?? 0.6);
+      districtScaleSliderEl.max = String(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE_MAX ?? 1.8);
+      districtScaleSliderEl.addEventListener('input', (e) => {
+        applyDistrictMapUiScale(Number(e.target.value));
+      });
+    }
+    updateDistrictScaleReadout();
+
     document.getElementById('select-floor').addEventListener('change', () => {
       void updateFloorPlan();
     });
@@ -2276,10 +2336,12 @@
         const dp = MODEL_CONFIG.DISTRICT_MAP_POSITION || { x: 0, y: 0, z: 0 };
         const ry = MODEL_CONFIG.DISTRICT_MAP_ROTATION_Y ?? 0;
         const deg = (((ry * 180) / Math.PI).toFixed(2));
+        const ds = Number(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE) || 1;
         text +=
           '\n\n// --- Макет района (MODEL_CONFIG) ---\n' +
           `DISTRICT_MAP_POSITION: { x: ${dp.x.toFixed(2)}, y: ${dp.y.toFixed(2)}, z: ${dp.z.toFixed(2)} },\n` +
-          `DISTRICT_MAP_ROTATION_Y: ${ry.toFixed(5)}, // ${deg}°`;
+          `DISTRICT_MAP_ROTATION_Y: ${ry.toFixed(5)}, // ${deg}°\n` +
+          `DISTRICT_MAP_UI_SCALE: ${ds.toFixed(3)},`;
       }
       try {
         await navigator.clipboard.writeText(text);
