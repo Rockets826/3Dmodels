@@ -168,27 +168,104 @@
       pointer-events: none;
     }
 
-    .spinner {
-      width: 48px;
-      height: 48px;
-      border: 3px solid rgba(255, 255, 255, 0.12);
-      border-top-color: #3ecf9a;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+    .duck-loading-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    .duck-loading-track {
+      position: relative;
+      width: min(300px, 88vw);
+      height: 14px;
+      border-radius: 999px;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.07),
+        rgba(255, 255, 255, 0.03)
+      );
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+      overflow: visible;
+    }
+
+    .duck-loading-track::after {
+      content: '';
+      position: absolute;
+      inset: 2px;
+      border-radius: inherit;
+      background: repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent 10px,
+        rgba(62, 207, 154, 0.06) 10px,
+        rgba(62, 207, 154, 0.06) 12px
+      );
+      pointer-events: none;
+    }
+
+    .duck-loading-runner {
+      position: absolute;
+      top: 50%;
+      left: 10%;
+      z-index: 2;
+      transform: translate(-50%, -50%);
+      animation: duckRunAlong 1.25s ease-in-out infinite alternate;
+    }
+
+    .duck-loading-waddle {
+      display: block;
+      font-size: 1.85rem;
+      line-height: 1;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+      animation: duckWaddle 0.38s ease-in-out infinite;
+    }
+
+    @keyframes duckRunAlong {
+      from {
+        left: 8%;
+      }
+      to {
+        left: 92%;
+      }
+    }
+
+    @keyframes duckWaddle {
+      0%,
+      100% {
+        transform: translateY(0) rotate(-7deg);
+      }
+      50% {
+        transform: translateY(-4px) rotate(7deg);
+      }
+    }
+
+    #loading-overlay:not(.hidden) .duck-loading-runner {
+      animation-play-state: running;
+    }
+
+    #loading-overlay.hidden .duck-loading-runner,
+    #loading-overlay.hidden .duck-loading-waddle {
+      animation-play-state: paused;
+    }
+
+    .duck-loading-caption {
+      margin: 0;
+      font-size: 0.72rem;
+      color: rgba(170, 184, 198, 0.55);
+      letter-spacing: 0.02em;
     }
 
     .loading-text {
-      margin-top: 16px;
+      margin-top: 4px;
       color: #aab8c6;
       font-size: 0.9rem;
     }
 
     .loading-inner {
       text-align: center;
+      max-width: min(360px, 92vw);
     }
 
     .hint {
@@ -236,7 +313,14 @@
 
   <div id="loading-overlay">
     <div class="loading-inner">
-      <div class="spinner"></div>
+      <div class="duck-loading-wrap">
+        <div class="duck-loading-track" role="progressbar" aria-busy="true" aria-label="Загрузка">
+          <span class="duck-loading-runner" aria-hidden="true" title="Уточка несёт модели"
+            ><span class="duck-loading-waddle">🦆</span></span
+          >
+        </div>
+        <p class="duck-loading-caption">Уточка тащит полигоны…</p>
+      </div>
       <div class="loading-text" id="loading-text">Загрузка сцены…</div>
     </div>
   </div>
@@ -436,6 +520,15 @@
         embedInDistrictPrefix: '2k',
         modelScale: 1,
         disabled: false,
+        floorPlanLod: true,
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/2k/1fl.glb' },
+          { level: 2, modelPath: 'systemaetajey/2k/2fl.glb' },
+          { level: 3, modelPath: 'systemaetajey/2k/3fl.glb' },
+          { level: 4, modelPath: 'systemaetajey/2k/4fl.glb' }
+        ],
         rooms: [
           { id: 'k02-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k02-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
@@ -617,6 +710,9 @@
 
     const MODEL_CONFIG = {
       BASE_URL: './',
+      /** Экран загрузки: минимум виден столько (мс) от первого beginLoad; после последнего endLoad ещё хвост (мс). */
+      LOADING_OVERLAY_MIN_VISIBLE_MS: 850,
+      LOADING_OVERLAY_TAIL_MS: 420,
       buildings: MANUAL_BUILDINGS.filter((b) => b.disabled !== true),
       contextBuildings: SURROUNDING_BUILDINGS.filter((c) => c.disabled !== true),
       DEFAULT_CONTEXT_SCALE: 1,
@@ -627,6 +723,9 @@
       FLOOR_PLAN_FOOTPRINT_PAD: 0.99,
       /** Смещение плоскости схемы над нижней гранью bbox корпуса (м) */
       FLOOR_PLAN_SURFACE_OFFSET: 0.18,
+      /** Тени у GLB этажей: обычно false — плоский план без «грязных» пятен от directional light. */
+      FLOOR_PLAN_CAST_SHADOW: false,
+      FLOOR_PLAN_RECEIVE_SHADOW: false,
       /** Горизонтальное расстояние камеры до центра корпуса (XZ), меньше которого включается план этажа (floorPlanLod). Меньше число — только с близкого зума. */
       FLOOR_PLAN_LOD_DISTANCE_IN: 28,
       /** Выше этого расстояния снова показывается фасад (гистерезис относительно …_IN). */
@@ -766,14 +865,45 @@
     const loadingText = document.getElementById('loading-text');
 
     let activeLoads = 0;
+    let loadingOverlayFirstShownAt = 0;
+    let loadingHideTimerId = null;
+
+    function scheduleLoadingOverlayHide() {
+      if (loadingHideTimerId != null) {
+        clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = null;
+      }
+      const minMs = Number(MODEL_CONFIG.LOADING_OVERLAY_MIN_VISIBLE_MS) || 0;
+      const tailMs = Number(MODEL_CONFIG.LOADING_OVERLAY_TAIL_MS) || 0;
+      const now = Date.now();
+      const minWait =
+        loadingOverlayFirstShownAt > 0
+          ? Math.max(0, minMs - (now - loadingOverlayFirstShownAt))
+          : 0;
+      const delay = minWait + tailMs;
+      loadingHideTimerId = setTimeout(() => {
+        loadingHideTimerId = null;
+        if (activeLoads === 0) loadingOverlay.classList.add('hidden');
+      }, delay);
+    }
+
     function beginLoad(msg) {
+      if (loadingHideTimerId != null) {
+        clearTimeout(loadingHideTimerId);
+        loadingHideTimerId = null;
+      }
+      if (activeLoads === 0) {
+        loadingOverlayFirstShownAt = Date.now();
+      }
       activeLoads++;
       loadingText.textContent = msg || 'Загрузка…';
       loadingOverlay.classList.remove('hidden');
     }
     function endLoad() {
       activeLoads = Math.max(0, activeLoads - 1);
-      if (activeLoads === 0) loadingOverlay.classList.add('hidden');
+      if (activeLoads === 0) {
+        scheduleLoadingOverlayHide();
+      }
     }
 
     function resolveModelPath(relativePath) {
@@ -2456,7 +2586,6 @@
       }
 
       const url = resolveModelPath(floorDef.modelPath);
-      beginLoad('Загрузка схемы этажа…');
       let plan = await loadGLB(url, bid, `floor ${level}`);
       if (!plan) {
         console.warn(`[LSU Nav] Схема этажа не загружена, плейсхолдер для этажа ${level}`);
@@ -2473,10 +2602,12 @@
         plan.add(ph);
       }
 
+      const fpCast = MODEL_CONFIG.FLOOR_PLAN_CAST_SHADOW === true;
+      const fpRecv = MODEL_CONFIG.FLOOR_PLAN_RECEIVE_SHADOW === true;
       plan.traverse((o) => {
         if (o.isMesh) {
-          o.castShadow = false;
-          o.receiveShadow = true;
+          o.castShadow = fpCast;
+          o.receiveShadow = fpRecv;
         }
       });
 
@@ -2491,7 +2622,6 @@
       currentFloorMesh = plan;
       currentFloorBuildingId = bid;
       currentFloorLevel = level;
-      endLoad();
     }
 
     function syncFloorPlanToggleUi() {
