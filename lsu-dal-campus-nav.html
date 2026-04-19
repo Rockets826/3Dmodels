@@ -544,6 +544,14 @@
         embedInDistrictPrefix: '3k',
         modelScale: 1,
         disabled: false,
+        floorPlanLod: true,
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/3k/1fl.glb' },
+          { level: 2, modelPath: 'systemaetajey/3k/2fl.glb' },
+          { level: 3, modelPath: 'systemaetajey/3k/3fl.glb' }
+        ],
         rooms: [
           { id: 'k03-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k03-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
