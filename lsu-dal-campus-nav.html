@@ -243,7 +243,7 @@
 
   <div id="ui-root">
     <h1>Кампус ЛГУ им. В.&nbsp;Даля</h1>
-    <p class="subtitle">Корпуса — <code>MANUAL_BUILDINGS</code> (раскладка с экрана при <code>PERSIST_CAMPUS_LAYOUT</code> запоминается в браузере), окружение — <code>SURROUNDING_BUILDINGS</code>, карта — <code>DISTRICT_MAP_GLB</code>. Сервер: <code>http://</code>, не <code>file://</code>.</p>
+    <p class="subtitle">Корпуса — <code>MANUAL_BUILDINGS</code> (<code>embedInDistrictPrefix</code>, метка над центром модели или <code>labelWorld</code>). Схемы этажей выключены (<code>ENABLE_FLOOR_PLANS_UI</code>). Карта — <code>DISTRICT_MAP_GLB</code>. Сервер: <code>http://</code>, не <code>file://</code>.</p>
 
     <div class="field">
       <label for="search-room">Поиск аудитории</label>
@@ -255,7 +255,7 @@
       <select id="select-building"></select>
     </div>
 
-    <div class="field">
+    <div id="floor-plans-ui" class="field" hidden>
       <label for="select-floor">Выберите этаж</label>
       <select id="select-floor"></select>
     </div>
@@ -309,9 +309,9 @@
       <p class="hint" style="margin-top:8px;margin-bottom:0;">Корпус — из списка зданий; окружение — из «Что двигать». В режиме gizmo камера по умолчанию <strong>не подлетает</strong> к зданию (<code>SKIP_FLY_CAMERA_WHILE_PLACEMENT_MODE</code>). Раскладка — <code>PERSIST_CAMPUS_LAYOUT</code>. Клик по зданию выбирает его для gizmo. Макет — <code>DISTRICT_MAP_*</code>. Orbit отключается, пока тянете gizmo.</p>
     </div>
 
-    <div class="toggle-row">
+    <div id="floor-plan-toggle-row" class="toggle-row" hidden>
       <span>Показать схему этажа (2D GLB)</span>
-      <input type="checkbox" id="toggle-floor-plan" checked />
+      <input type="checkbox" id="toggle-floor-plan" />
     </div>
 
     <div class="field">
@@ -362,7 +362,10 @@
      * =============================================================================
      * - Удалите лишние объекты или скопируйте один блок, изменив id, name, position, modelPath.
      * - disabled: true — временно скрыть корпус со сцены.
-     * - modelPath: путь относительно BASE_URL (папка с HTML при serve).
+     * - modelPath: путь относительно BASE_URL (папка с HTML при serve). Пустая строка — если корпус целиком в GLB макета.
+     * - Один GLB «район + корпуса» (DISTRICT_MAP_GLB): embedInDistrictPrefix: '1k' подхватывает узлы 1k, 1kw, 1kw.001 …;
+     *   embedInDistrictStartsWith / embedInDistrictStartsWithAny — по началу имени (без учёта регистра); embedInDistrictExtraNames — точные имена.
+     *   position оставьте { x: 0, z: 0 } — геометрия уже стоит в координатах макета. Слайдер «Размер» для таких корпусов отключён.
      * - Размер (важно): при NORMALIZE_BUILDING_SIZE в MODEL_CONFIG каждый GLB подгоняется так, чтобы max(x,y,z) стал
      *   NORMALIZED_BUILDING_MAX_DIM. Тогда modelScale до подгонки сокращается формулой — итоговый габарит не меняется.
      *   Как задавать по-разному:
@@ -379,10 +382,11 @@
      *   name: 'Название',
      *   position: { x: 0, z: 0 },
      *   rotationY: 0,
-     *   modelPath: '3D/file.glb',
+     *   modelPath: '3D/file.glb', // или '' + embedInDistrictPrefix: '5k'
      *   modelScale: 1,
      *   disabled: false,
-     *   floors: [{ level: 1, modelPath: '' }],
+     *   floors: [{ level: 1, modelPath: '…' }], // опционально, если ENABLE_FLOOR_PLANS_UI
+     *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
      *     { id: 'uniq-hall', label: 'Холл', floor: 1, local: { x: 0, z: 0 } },
      *     { id: 'uniq-st', label: 'Лестница', floor: 1, local: { x: 2, z: -1 }, isStairs: true }
@@ -394,170 +398,182 @@
       {
         id: 'korpus-01',
         name: 'Корпус 1',
-        position: { x: -84, z: -62 },
-        modelPath: '3D/korpus-01.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '1k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k01-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k01-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: -84, y: 1, z: -44 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-02',
         name: 'Корпус 2',
-        position: { x: -28, z: -62 },
-        modelPath: '3D/korpus-02.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '2k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k02-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k02-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: -28, y: 1, z: -44 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-03',
         name: 'Корпус 3',
-        position: { x: 28, z: -62 },
-        modelPath: '3D/korpus-03.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '3k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k03-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k03-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: 28, y: 1, z: -44 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-04',
         name: 'Корпус 4',
-        position: { x: 84, z: -62 },
-        modelPath: '3D/korpus-04.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '4k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k04-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k04-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: 84, y: 1, z: -44 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-05',
         name: 'Корпус 5',
-        position: { x: -84, z: 0 },
-        modelPath: '3D/korpus-05.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '5k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k05-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k05-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: -84, y: 1, z: 18 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-06',
         name: 'Корпус 6',
-        position: { x: -28, z: 0 },
-        modelPath: '3D/korpus-06.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '6k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k06-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k06-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: -28, y: 1, z: 18 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-07',
         name: 'Корпус 7',
-        position: { x: 28, z: 0 },
-        modelPath: '3D/korpus-07.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '7kw',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k07-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k07-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: 28, y: 1, z: 18 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-08',
         name: 'Корпус 8',
-        position: { x: 84, z: 0 },
-        modelPath: '3D/korpus-08.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '8k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k08-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k08-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: 84, y: 1, z: 18 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-09',
         name: 'Корпус 9',
-        position: { x: -84, z: 62 },
-        modelPath: '3D/korpus-09.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '9k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k09-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k09-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: -84, y: 1, z: 80 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-10',
         name: 'Корпус 10',
-        position: { x: -28, z: 62 },
-        modelPath: '3D/korpus-10.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictStartsWithAny: ['Cube.', 'Mesh.'],
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k10-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k10-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: -28, y: 1, z: 80 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-11',
         name: 'Корпус 12',
-        position: { x: 28, z: 62 },
-        modelPath: '3D/korpus-11.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '11k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k11-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k11-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: 28, y: 1, z: 80 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       },
       {
         id: 'korpus-12',
         name: 'Корпус Синий 1-а',
-        position: { x: 84, z: 62 },
-        modelPath: '3D/korpus-12.glb',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: '12k',
         modelScale: 1,
         disabled: false,
-        floors: [{ level: 1, modelPath: '' }],
         rooms: [
           { id: 'k12-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k12-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
-        entranceWorld: { x: 84, y: 1, z: 80 }
+        entranceWorld: { x: 0, y: 1, z: 0 }
       }
     ];
 
@@ -588,6 +604,10 @@
       FLOOR_PLAN_Y_OFFSET: 28,
       FLOOR_PLAN_SCALE: 1,
       FLOOR_HEIGHT_METERS: 3.5,
+      /**
+       * UI «этаж» + GLB-схемы этажа. false — блок скрыт, схемы не грузятся (маршруты по комнатам с полем floor всё ещё работают).
+       */
+      ENABLE_FLOOR_PLANS_UI: false,
       /** Используется, если у корпуса normalize: false (см. MANUAL_BUILDINGS). */
       DEFAULT_BUILDING_SCALE: 1,
       /**
@@ -623,7 +643,7 @@
        */
       PERSIST_CAMPUS_LAYOUT: true,
       /** Смените ключ, если нужен отдельный пресет (или очистка старого формата). */
-      CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v1',
+      CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v3-no-floors-ui',
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
       FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
       /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
@@ -635,10 +655,10 @@
       DISTRICT_MAP_UNDERLAY_EXTENT: 9200,
 
       /**
-       * Карта района одним GLB. Положите файл сюда: maket_rayona/maket_rayona.glb
-       * (другое имя — переименуйте или поменяйте путь ниже). Пустая строка = не грузить.
+       * Карта района одним GLB (можно тот же файл, где и корпуса — см. embedInDistrict* в MANUAL_BUILDINGS).
+       * Пустая строка = не грузить.
        */
-      DISTRICT_MAP_GLB: 'maket_rayona/maket_rayona.glb',
+      DISTRICT_MAP_GLB: 'maket_rayona/rayon-s-korpusami.glb',
       /** Доп. множитель после автоподгонки (меньше 1 — ещё уменьшить вручную) */
       DISTRICT_MAP_SCALE: 1,
       /**
@@ -951,6 +971,103 @@
           }
         );
       });
+    }
+
+    /** Корпус целиком внутри GLB макета: префикс имени узла (1k → 1k, 1kw, 1kw.001 …), или startsWith, или точные имена. */
+    function buildingUsesDistrictEmbed(b) {
+      if (!b) return false;
+      if (b.embedInDistrictPrefix && String(b.embedInDistrictPrefix).trim() !== '') return true;
+      if (b.embedInDistrictStartsWith && String(b.embedInDistrictStartsWith).trim() !== '')
+        return true;
+      const swAny = b.embedInDistrictStartsWithAny;
+      if (Array.isArray(swAny) && swAny.some((s) => s && String(s).trim() !== '')) return true;
+      const ex = b.embedInDistrictExtraNames;
+      return Array.isArray(ex) && ex.length > 0;
+    }
+
+    function districtEmbedNameMatches(name, b) {
+      if (!name) return false;
+      const extras = b.embedInDistrictExtraNames;
+      if (Array.isArray(extras) && extras.includes(name)) return true;
+      const sw = b.embedInDistrictStartsWith;
+      if (sw) {
+        const ln = name.toLowerCase();
+        const ls = String(sw).toLowerCase();
+        if (ln.startsWith(ls)) return true;
+      }
+      const swAny = b.embedInDistrictStartsWithAny;
+      if (Array.isArray(swAny)) {
+        const ln = name.toLowerCase();
+        for (let i = 0; i < swAny.length; i++) {
+          const raw = swAny[i];
+          if (!raw) continue;
+          if (ln.startsWith(String(raw).toLowerCase())) return true;
+        }
+      }
+      const p = b.embedInDistrictPrefix;
+      if (!p) return false;
+      // Якорь к началу имени: 1k → 1k, 1kw… но не 11kw (в отличие от startsWith(p+'w')).
+      const re = new RegExp(
+        '^' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(\\.|$|w)'
+      );
+      return re.test(name);
+    }
+
+    function restoreInteractiveRaycast(o) {
+      if (o.isMesh) o.raycast = THREE.Mesh.prototype.raycast.bind(o);
+      else if (o.isLineSegments)
+        o.raycast = THREE.LineSegments.prototype.raycast.bind(o);
+      else if (o.isLine) o.raycast = THREE.Line.prototype.raycast.bind(o);
+      else if (o.isPoints) o.raycast = THREE.Points.prototype.raycast.bind(o);
+    }
+
+    function initEmbeddedBuildingEntranceFromBBox(b, root) {
+      root.updateMatrixWorld(true);
+      const box = new THREE.Box3();
+      if (!expandWorldBoxFromMeshes(root, box) || box.isEmpty()) {
+        box.setFromObject(root, true);
+      }
+      if (box.isEmpty()) return;
+      const c = box.getCenter(new THREE.Vector3());
+      const pad = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) * 0.04;
+      if (!b.entranceWorld) b.entranceWorld = {};
+      b.entranceWorld.x = c.x;
+      b.entranceWorld.y = box.min.y + 1.2;
+      b.entranceWorld.z = box.max.z + pad;
+    }
+
+    /**
+     * Вырезает из загруженного макета все узлы, чьи имена подходят под правило корпуса, и группирует под pivot в сцене.
+     * @returns {THREE.Group|null}
+     */
+    function extractEmbeddedBuildingFromDistrict(b) {
+      if (!districtMapObject || !buildingUsesDistrictEmbed(b)) return null;
+      const hits = [];
+      districtMapObject.traverse((o) => {
+        if (o === districtMapObject) return;
+        if (!o.name || !districtEmbedNameMatches(o.name, b)) return;
+        hits.push(o);
+      });
+      hits.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      if (!hits.length) {
+        console.warn(
+          `[LSU Nav] В макете не найдены узлы для «${b.name}» (${b.id}). Проверьте embedInDistrict* в MANUAL_BUILDINGS.`
+        );
+        return null;
+      }
+      const pivot = new THREE.Group();
+      pivot.userData.buildingId = b.id;
+      pivot.userData.embeddedFromDistrict = true;
+      for (let i = 0; i < hits.length; i++) {
+        pivot.attach(hits[i]);
+      }
+      pivot.traverse((o) => {
+        restoreInteractiveRaycast(o);
+      });
+      pivot.userData.buildingVisual = pivot;
+      pivot.userData.postFitUniformScale = 1;
+      initEmbeddedBuildingEntranceFromBBox(b, pivot);
+      return pivot;
     }
 
     /** Ссылка на загруженный макет района (для отладки) */
@@ -1269,10 +1386,24 @@
     function updateBuildingLabel(bid) {
       const label = buildingLabels.get(bid);
       const root = buildingMeshes.get(bid);
+      const b = buildingDataById.get(bid);
       if (!label || !root) return;
+      root.updateMatrixWorld(true);
+      const lw = b?.labelWorld;
+      if (lw && Number.isFinite(lw.x) && Number.isFinite(lw.z)) {
+        const box = new THREE.Box3().setFromObject(root);
+        const autoY = !box.isEmpty() ? box.max.y + 2 : 18;
+        const ly = Number.isFinite(lw.y) ? lw.y : autoY;
+        label.position.set(lw.x, ly, lw.z);
+        return;
+      }
       const box = new THREE.Box3().setFromObject(root);
-      const y = !box.isEmpty() ? box.max.y + 2 : 18;
-      label.position.set(root.position.x, y, root.position.z);
+      if (!box.isEmpty()) {
+        const c = box.getCenter(new THREE.Vector3());
+        label.position.set(c.x, box.max.y + 2, c.z);
+      } else {
+        label.position.set(root.position.x, 18, root.position.z);
+      }
     }
 
     function recomputeEntranceWorldFromOffset(b) {
@@ -1289,6 +1420,10 @@
     function applyBuildingSizeToVisual(b) {
       if (!b) return;
       const root = buildingMeshes.get(b.id);
+      if (root?.userData?.embeddedFromDistrict) {
+        updateBuildingLabel(b.id);
+        return;
+      }
       const visual = root?.userData?.buildingVisual;
       if (!visual || visual.userData.postFitUniformScale == null) return;
       const base = visual.userData.postFitUniformScale;
@@ -1531,6 +1666,15 @@
           }
           const root = buildingMeshes.get(b.id);
           if (!root) continue;
+          if (root.userData.embeddedFromDistrict) {
+            if (typeof s.rotationY === 'number') {
+              b.rotationY = s.rotationY;
+              root.rotation.y = b.rotationY;
+            }
+            recomputeEntranceWorldFromOffset(b);
+            updateBuildingLabel(b.id);
+            continue;
+          }
           root.position.set(b.position.x, 0, b.position.z);
           root.rotation.y = b.rotationY ?? 0;
           applyBuildingSizeToVisual(b);
@@ -1559,6 +1703,30 @@
     const buildingDataById = new Map();
     let selectedBuildingId = null;
     const originalMaterials = new WeakMap();
+
+    function effectiveFloors(b) {
+      if (!b || !Array.isArray(b.floors) || b.floors.length === 0) {
+        return [{ level: 1, modelPath: '' }];
+      }
+      return b.floors;
+    }
+
+    function getBuildingHorizCenterXZ(bid) {
+      const root = buildingMeshes.get(bid);
+      const b = buildingDataById.get(bid);
+      if (root) {
+        root.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(root);
+        if (!box.isEmpty()) {
+          const c = box.getCenter(new THREE.Vector3());
+          return { x: c.x, z: c.z };
+        }
+      }
+      if (b && b.position) {
+        return { x: Number(b.position.x) || 0, z: Number(b.position.z) || 0 };
+      }
+      return { x: 0, z: 0 };
+    }
 
     function storeOriginalMaterials(root) {
       root.traverse((o) => {
@@ -1771,10 +1939,16 @@
 
     async function loadCampus() {
       beginLoad('Загрузка моделей корпусов…');
+      const fpu = document.getElementById('floor-plans-ui');
+      const fpt = document.getElementById('floor-plan-toggle-row');
+      const showFloors = MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true;
+      if (fpu) fpu.hidden = !showFloors;
+      if (fpt) fpt.hidden = !showFloors;
       indexRooms();
       await loadDistrictMapIfConfigured();
       const palette = [0x8b9dc3, 0xa68bc4, 0x7eb8da];
       let fallbackCount = 0;
+      const embedFailedIds = [];
       const warnEl = document.getElementById('load-warning');
 
       if (window.location.protocol === 'file:') {
@@ -1806,7 +1980,7 @@
         buildingDataById.set(b.id, b);
 
         const url = resolveModelPath(b.modelPath);
-        const root = new THREE.Group();
+        let root = new THREE.Group();
         root.userData.buildingId = b.id;
 
         const buildingNormOpts =
@@ -1816,39 +1990,70 @@
               ? { maxDim: b.normalizeMaxDim }
               : undefined;
 
-        let sceneModel = await loadGLB(url, b.id, 'building');
-        if (sceneModel) {
-          const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
-          sceneModel.scale.setScalar(Math.max(1e-5, sc));
-          const fitOk = fitBuildingModelToRoot(sceneModel, buildingNormOpts);
-          if (!fitOk) {
-            console.warn(`[LSU Nav] Подгонка габарита не удалась для «${b.name}»`);
-          }
-          sceneModel.userData.postFitUniformScale = sceneModel.scale.x;
-          sceneModel.traverse((o) => {
-            if (o.isMesh) {
-              o.castShadow = true;
-              o.receiveShadow = true;
-              fixBuildingMaterialsForMesh(o, b.id);
-              fixTooDarkMaterialsForMesh(o, b.id);
+        let fromDistrictEmbed = false;
+        if (buildingUsesDistrictEmbed(b)) {
+          if (!districtMapObject) {
+            console.warn(
+              `[LSU Nav] «${b.name}»: корпус привязан к макету (embed), но DISTRICT_MAP_GLB не загружен.`
+            );
+            embedFailedIds.push(b.id);
+          } else {
+            const pivot = extractEmbeddedBuildingFromDistrict(b);
+            if (pivot) {
+              root = pivot;
+              fromDistrictEmbed = true;
+              root.traverse((o) => {
+                if (o.isMesh) {
+                  o.castShadow = true;
+                  o.receiveShadow = true;
+                  fixBuildingMaterialsForMesh(o, b.id);
+                  fixTooDarkMaterialsForMesh(o, b.id);
+                }
+                o.userData.buildingId = b.id;
+              });
+              root.userData.buildingVisual = root;
+              root.userData.postFitUniformScale = 1;
+            } else {
+              embedFailedIds.push(b.id);
             }
-            o.userData.buildingId = b.id;
-          });
-          root.add(sceneModel);
-          root.userData.buildingVisual = sceneModel;
-        } else {
-          fallbackCount++;
-          console.warn(
-            `[LSU Nav] Модель не найдена, используется временная геометрия для «${b.name}»`
-          );
-          const fallback = createFallbackBuildingMesh(b.id, palette[i % palette.length]);
-          root.add(fallback);
-          const fitOkFb = fitBuildingModelToRoot(fallback, buildingNormOpts);
-          if (!fitOkFb) {
-            console.warn(`[LSU Nav] Подгонка габарита не удалась (заглушка «${b.name}»)`);
           }
-          fallback.userData.postFitUniformScale = fallback.scale.x;
-          root.userData.buildingVisual = fallback;
+        }
+
+        if (!fromDistrictEmbed) {
+          const sceneModel = await loadGLB(url, b.id, 'building');
+          if (sceneModel) {
+            const sc = b.modelScale ?? MODEL_CONFIG.DEFAULT_BUILDING_SCALE ?? 1;
+            sceneModel.scale.setScalar(Math.max(1e-5, sc));
+            const fitOk = fitBuildingModelToRoot(sceneModel, buildingNormOpts);
+            if (!fitOk) {
+              console.warn(`[LSU Nav] Подгонка габарита не удалась для «${b.name}»`);
+            }
+            sceneModel.userData.postFitUniformScale = sceneModel.scale.x;
+            sceneModel.traverse((o) => {
+              if (o.isMesh) {
+                o.castShadow = true;
+                o.receiveShadow = true;
+                fixBuildingMaterialsForMesh(o, b.id);
+                fixTooDarkMaterialsForMesh(o, b.id);
+              }
+              o.userData.buildingId = b.id;
+            });
+            root.add(sceneModel);
+            root.userData.buildingVisual = sceneModel;
+          } else {
+            fallbackCount++;
+            console.warn(
+              `[LSU Nav] Модель не найдена, используется временная геометрия для «${b.name}»`
+            );
+            const fallback = createFallbackBuildingMesh(b.id, palette[i % palette.length]);
+            root.add(fallback);
+            const fitOkFb = fitBuildingModelToRoot(fallback, buildingNormOpts);
+            if (!fitOkFb) {
+              console.warn(`[LSU Nav] Подгонка габарита не удалась (заглушка «${b.name}»)`);
+            }
+            fallback.userData.postFitUniformScale = fallback.scale.x;
+            root.userData.buildingVisual = fallback;
+          }
         }
 
         const m0 = Math.max(1e-5, b.buildingSizeMultiplier ?? 1);
@@ -1895,7 +2100,12 @@
         warnEl.hidden = true;
       } else if (fallbackCount > 0 && window.location.protocol !== 'file:') {
         warnEl.hidden = false;
-        warnEl.innerHTML = `Не удалось загрузить <strong>${fallbackCount}</strong> из ${MODEL_CONFIG.buildings.length} GLB (показаны кубы). Проверьте пути в <code>MANUAL_BUILDINGS</code>, папку <code>3D/</code> и консоль (F12).`;
+        const n = MODEL_CONFIG.buildings.length;
+        const embedHint =
+          embedFailedIds.length > 0
+            ? ` Для <code>${embedFailedIds.join('</code>, <code>')}</code> в GLB макета не найдено ни одного узла по правилам <code>embedInDistrict*</code> (или макет не загрузился) — поправьте имена в Blender или задайте <code>embedInDistrictExtraNames</code> / <code>embedInDistrictStartsWithAny</code>.`
+            : '';
+        warnEl.innerHTML = `Показана заглушка-куб для <strong>${fallbackCount}</strong> из ${n} корпусов.${embedHint} Если задан отдельный <code>modelPath</code> — проверьте путь и папку <code>3D/</code>. Консоль: F12.`;
       }
       endLoad();
       populateRouteSelects();
@@ -1988,7 +2198,12 @@
       const fs = document.getElementById('select-floor');
       fs.innerHTML = '';
       if (!b) return;
-      b.floors.forEach((f) => {
+      if (MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI !== true) {
+        fs.add(new Option('1', '1'));
+        fs.value = '1';
+        return;
+      }
+      effectiveFloors(b).forEach((f) => {
         fs.add(new Option(`Этаж ${f.level}`, String(f.level)));
       });
     }
@@ -2002,6 +2217,11 @@
         floorPlanRoot.add(floorRouteGroup);
       }
 
+      if (MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI !== true) {
+        currentFloorMesh = null;
+        return;
+      }
+
       const bid = document.getElementById('select-building').value;
       const level = parseInt(document.getElementById('select-floor').value, 10);
       const b = buildingDataById.get(bid);
@@ -2009,7 +2229,7 @@
 
       syncFloorRouteGroupPosition(b);
 
-      const floorDef = b.floors.find((f) => f.level === level);
+      const floorDef = effectiveFloors(b).find((f) => f.level === level);
       if (!floorDef || !document.getElementById('toggle-floor-plan').checked) {
         currentFloorMesh = null;
         currentFloorBuildingId = bid;
@@ -2070,10 +2290,13 @@
     function showBuildingInfo(bid) {
       const b = buildingDataById.get(bid);
       if (!b) return;
-      const floors = b.floors.length;
       const rooms = (b.rooms || []).map((r) => r.label).join(', ');
+      const floorNote =
+        MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true
+          ? `Этажей: ${effectiveFloors(b).length}<br/>`
+          : '';
       appendInfo(
-        `<strong>${b.name}</strong><br/>Этажей: ${floors}<br/>Аудитории и точки: ${rooms || '—'}`
+        `<strong>${b.name}</strong><br/>${floorNote}Аудитории и точки: ${rooms || '—'}`
       );
     }
 
@@ -2137,8 +2360,9 @@
       }
       const b = buildingDataById.get(bid);
       if (!b) return;
-      const target = new THREE.Vector3(b.position.x, 8, b.position.z);
-      const endPos = new THREE.Vector3(b.position.x + 35, 28, b.position.z + 35);
+      const xz = getBuildingHorizCenterXZ(bid);
+      const target = new THREE.Vector3(xz.x, 8, xz.z);
+      const endPos = new THREE.Vector3(xz.x + 35, 28, xz.z + 35);
 
       new TWEEN.Tween(activeCamera.position)
         .to({ x: endPos.x, y: endPos.y, z: endPos.z }, 1200)
@@ -2368,9 +2592,9 @@
       controls.object = orthoCamera;
       transformControls.camera = orthoCamera;
       const bid = document.getElementById('select-building').value;
-      const b = buildingDataById.get(bid);
-      const cx = b ? b.position.x : 0;
-      const cz = b ? b.position.z : 0;
+      const xz = getBuildingHorizCenterXZ(bid);
+      const cx = xz.x;
+      const cz = xz.z;
       orthoCamera.position.set(cx, 150, cz);
       orthoCamera.lookAt(cx, 0, cz);
       controls.target.set(cx, 0, cz);
