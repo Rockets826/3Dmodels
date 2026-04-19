@@ -364,6 +364,7 @@
      * - disabled: true — временно скрыть корпус со сцены.
      * - modelPath: путь относительно BASE_URL (папка с HTML при serve). Пустая строка — если корпус целиком в GLB макета.
      * - Один GLB «район + корпуса» (DISTRICT_MAP_GLB): embedInDistrictPrefix: '1k' подхватывает узлы 1k, 1kw, 1kw.001 …;
+     *   «Синий 1-а» в макете — корень sk, окна skw, skw.001 … (префикс sk).
      *   embedInDistrictStartsWith / embedInDistrictStartsWithAny — по началу имени (без учёта регистра); embedInDistrictExtraNames — точные имена.
      *   position оставьте { x: 0, z: 0 } — геометрия уже стоит в координатах макета. Слайдер «Размер» для таких корпусов отключён.
      * - Размер (важно): при NORMALIZE_BUILDING_SIZE в MODEL_CONFIG каждый GLB подгоняется так, чтобы max(x,y,z) стал
@@ -532,7 +533,7 @@
       },
       {
         id: 'korpus-11',
-        name: 'Корпус 12',
+        name: 'Корпус 11',
         position: { x: 0, z: 0 },
         rotationY: 0,
         modelPath: '',
@@ -545,9 +546,10 @@
         ],
         entranceWorld: { x: 0, y: 1, z: 0 }
       },
+      // 12-й корпус на макете — узлы 12k / 12kw… Отдельный экспорт той же геометрии: 3D/korpus-1a.glb (ранее korpus-12.glb).
       {
         id: 'korpus-12',
-        name: 'Корпус Синий 1-а',
+        name: 'Корпус 12',
         position: { x: 0, z: 0 },
         rotationY: 0,
         modelPath: '',
@@ -557,6 +559,22 @@
         rooms: [
           { id: 'k12-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k12-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
+        ],
+        entranceWorld: { x: 0, y: 1, z: 0 }
+      },
+      // Корпус синий 1-а в GLB: sk + skw… (не путать с 12k — это 12-й корпус).
+      {
+        id: 'korpus-siniy-1a',
+        name: 'Корпус синий 1-а',
+        position: { x: 0, z: 0 },
+        rotationY: 0,
+        modelPath: '',
+        embedInDistrictPrefix: 'sk',
+        modelScale: 1,
+        disabled: false,
+        rooms: [
+          { id: 's1a-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
+          { id: 's1a-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
         ],
         entranceWorld: { x: 0, y: 1, z: 0 }
       }
@@ -628,7 +646,7 @@
        */
       PERSIST_CAMPUS_LAYOUT: true,
       /** Смените ключ, если нужен отдельный пресет (или очистка старого формата). */
-      CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v4-no-k10',
+      CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v5-siniy-sk',
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
       FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
       /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
