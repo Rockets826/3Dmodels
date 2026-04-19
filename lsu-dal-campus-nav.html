@@ -243,7 +243,7 @@
 
   <div id="ui-root">
     <h1>Кампус ЛГУ им. В.&nbsp;Даля</h1>
-    <p class="subtitle">Корпуса — <code>MANUAL_BUILDINGS</code> (<code>embedInDistrictPrefix</code>, метка над центром модели или <code>labelWorld</code>). Схемы этажей выключены (<code>ENABLE_FLOOR_PLANS_UI</code>). Карта — <code>DISTRICT_MAP_GLB</code>. Сервер: <code>http://</code>, не <code>file://</code>.</p>
+    <p class="subtitle">Корпуса — <code>MANUAL_BUILDINGS</code> (<code>embedInDistrictPrefix</code>, метка над центром модели или <code>labelWorld</code>). Схемы этажей — <code>floors</code> + <code>ENABLE_FLOOR_PLANS_UI</code>; у корпуса с <code>floorPlanLod</code> схема появляется при приближении камеры (как в 2ГИС). Карта — <code>DISTRICT_MAP_GLB</code>. Сервер: <code>http://</code>, не <code>file://</code>.</p>
 
     <div class="field">
       <label for="search-room">Поиск аудитории</label>
@@ -256,6 +256,9 @@
     </div>
 
     <div id="floor-plans-ui" class="field" hidden>
+      <p id="floor-plan-lod-hint" class="hint" hidden style="margin:0 0 8px 0;">
+        Для этого корпуса схема этажа включается автоматически при приближении камеры.
+      </p>
       <label for="select-floor">Выберите этаж</label>
       <select id="select-floor"></select>
     </div>
@@ -387,6 +390,9 @@
      *   modelScale: 1,
      *   disabled: false,
      *   floors: [{ level: 1, modelPath: '…' }], // опционально, если ENABLE_FLOOR_PLANS_UI
+     *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
+     *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
+     *   floorPlanMatchBuildingFootprint: true, // подогнать масштаб и центр под bbox корпуса (для LOD по умолчанию true; false — только FLOOR_PLAN_SCALE + центр)
      *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
      *     { id: 'uniq-hall', label: 'Холл', floor: 1, local: { x: 0, z: 0 } },
@@ -405,6 +411,16 @@
         embedInDistrictPrefix: '1k',
         modelScale: 1,
         disabled: false,
+        /** GLB этажей: `systemaetajey/1k/` — 1fl, 2fl, … План в плоскости XZ (как в Blender/glTF), без лишнего поворота; масштаб под габарит корпуса. */
+        floorPlanLod: true,
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/1k/1fl.glb' },
+          { level: 2, modelPath: 'systemaetajey/1k/2fl.glb' },
+          { level: 3, modelPath: 'systemaetajey/1k/3fl.glb' },
+          { level: 4, modelPath: 'systemaetajey/1k/4fl.glb' }
+        ],
         rooms: [
           { id: 'k01-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
           { id: 'k01-st', label: 'Лестница', floor: 1, local: { x: 3, z: -2 }, isStairs: true }
@@ -604,13 +620,22 @@
       buildings: MANUAL_BUILDINGS.filter((b) => b.disabled !== true),
       contextBuildings: SURROUNDING_BUILDINGS.filter((c) => c.disabled !== true),
       DEFAULT_CONTEXT_SCALE: 1,
+      /** Запасная высота подложки схемы, если bbox корпуса ещё недоступен */
       FLOOR_PLAN_Y_OFFSET: 28,
       FLOOR_PLAN_SCALE: 1,
+      /** При подгонке к корпусу: доля габарита (чуть меньше 1 — небольшой зазор). */
+      FLOOR_PLAN_FOOTPRINT_PAD: 0.99,
+      /** Смещение плоскости схемы над нижней гранью bbox корпуса (м) */
+      FLOOR_PLAN_SURFACE_OFFSET: 0.18,
+      /** Горизонтальное расстояние камеры до центра корпуса (XZ): внутри — режим «план этажа» для floorPlanLod */
+      FLOOR_PLAN_LOD_DISTANCE_IN: 100,
+      /** Чуть больше, чем …_IN — гистерезис, чтобы не мигало на границе */
+      FLOOR_PLAN_LOD_DISTANCE_OUT: 122,
       FLOOR_HEIGHT_METERS: 3.5,
       /**
-       * UI «этаж» + GLB-схемы этажа. false — блок скрыт, схемы не грузятся (маршруты по комнатам с полем floor всё ещё работают).
+       * UI «этаж» + GLB-схемы этажа. Блок в интерфейсе показывается, если у хотя бы одного корпуса заданы непустые modelPath в floors.
        */
-      ENABLE_FLOOR_PLANS_UI: false,
+      ENABLE_FLOOR_PLANS_UI: true,
       /** Используется, если у корпуса normalize: false (см. MANUAL_BUILDINGS). */
       DEFAULT_BUILDING_SCALE: 1,
       /**
@@ -1749,27 +1774,62 @@
     const originalMaterials = new WeakMap();
 
     function effectiveFloors(b) {
-      if (!b || !Array.isArray(b.floors) || b.floors.length === 0) {
-        return [{ level: 1, modelPath: '' }];
-      }
+      if (!b || !Array.isArray(b.floors) || b.floors.length === 0) return [];
       return b.floors;
     }
 
-    function getBuildingHorizCenterXZ(bid) {
+    function hasConfigurableFloorGlbs(b) {
+      return effectiveFloors(b).some((f) => String(f.modelPath || '').trim() !== '');
+    }
+
+    function buildingUsesFloorLod(b) {
+      return !!(b && b.floorPlanLod === true && hasConfigurableFloorGlbs(b));
+    }
+
+    function anyBuildingHasFloorGlbs() {
+      return MODEL_CONFIG.buildings.some((x) => hasConfigurableFloorGlbs(x));
+    }
+
+    function anyBuildingHasManualFloorToggle() {
+      return MODEL_CONFIG.buildings.some(
+        (x) => hasConfigurableFloorGlbs(x) && !buildingUsesFloorLod(x)
+      );
+    }
+
+    /** Bbox корня корпуса в мире; при скрытом фасаде (LOD) временно показывает геометрию для измерения. */
+    function getBuildingRootWorldBox(bid) {
       const root = buildingMeshes.get(bid);
+      if (!root) return null;
+      const vis = root.userData?.buildingVisual;
+      let restore = null;
+      if (vis && vis.visible === false) {
+        restore = false;
+        vis.visible = true;
+      }
+      root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(root);
+      if (restore !== null) vis.visible = restore;
+      return box.isEmpty() ? null : box;
+    }
+
+    function getBuildingHorizCenterXZ(bid) {
       const b = buildingDataById.get(bid);
-      if (root) {
-        root.updateMatrixWorld(true);
-        const box = new THREE.Box3().setFromObject(root);
-        if (!box.isEmpty()) {
-          const c = box.getCenter(new THREE.Vector3());
-          return { x: c.x, z: c.z };
-        }
+      const box = getBuildingRootWorldBox(bid);
+      if (box) {
+        const c = box.getCenter(new THREE.Vector3());
+        return { x: c.x, z: c.z };
       }
       if (b && b.position) {
         return { x: Number(b.position.x) || 0, z: Number(b.position.z) || 0 };
       }
       return { x: 0, z: 0 };
+    }
+
+    function getBuildingWorldFloorPlanSurfaceY(bid) {
+      const off = Number(MODEL_CONFIG.FLOOR_PLAN_SURFACE_OFFSET) || 0.15;
+      const box = getBuildingRootWorldBox(bid);
+      if (box) return box.min.y + off;
+      return Number(MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET) || 0;
     }
 
     function storeOriginalMaterials(root) {
@@ -1814,6 +1874,9 @@
     let currentFloorMesh = null;
     let currentFloorBuildingId = null;
     let currentFloorLevel = null;
+
+    const floorLodInteriorByBid = new Map();
+    let lastFloorLodPlanKey = '';
 
     const routeGroup = new THREE.Group();
     scene.add(routeGroup);
@@ -1865,11 +1928,10 @@
     function syncFloorRouteGroupPosition(building) {
       if (!building) return;
       const s = MODEL_CONFIG.FLOOR_PLAN_SCALE;
-      floorRouteGroup.position.set(
-        building.position.x,
-        MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET + 0.12,
-        building.position.z
-      );
+      const bid = building.id;
+      const xz = getBuildingHorizCenterXZ(bid);
+      const y = getBuildingWorldFloorPlanSurfaceY(bid) + 0.12;
+      floorRouteGroup.position.set(xz.x, y, xz.z);
       floorRouteGroup.scale.setScalar(s);
     }
 
@@ -1887,9 +1949,10 @@
     }
 
     function worldFromFloorLocal(building, floorLevel, local) {
-      const bx = building.position.x;
-      const bz = building.position.z;
-      const yOff = MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET;
+      const xz = getBuildingHorizCenterXZ(building.id);
+      const bx = xz.x;
+      const bz = xz.z;
+      const yOff = getBuildingWorldFloorPlanSurfaceY(building.id);
       const fh = MODEL_CONFIG.FLOOR_HEIGHT_METERS;
       const s = MODEL_CONFIG.FLOOR_PLAN_SCALE;
       const y = yOff + 0.2 + (floorLevel - 1) * fh;
@@ -1985,9 +2048,14 @@
       beginLoad('Загрузка моделей корпусов…');
       const fpu = document.getElementById('floor-plans-ui');
       const fpt = document.getElementById('floor-plan-toggle-row');
-      const showFloors = MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true;
-      if (fpu) fpu.hidden = !showFloors;
-      if (fpt) fpt.hidden = !showFloors;
+      const showFloorUi =
+        MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && anyBuildingHasFloorGlbs();
+      if (fpu) fpu.hidden = !showFloorUi;
+      if (fpt) {
+        fpt.hidden = !(
+          MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && anyBuildingHasManualFloorToggle()
+        );
+      }
       indexRooms();
       await loadDistrictMapIfConfigured();
       const palette = [0x8b9dc3, 0xa68bc4, 0x7eb8da];
@@ -2159,6 +2227,8 @@
       endLoad();
       populateRouteSelects();
       populateBuildingSelect();
+      syncFloorPlanToggleUi();
+      applyFloorInteriorLod();
       await loadSurroundingBuildings();
     }
 
@@ -2252,9 +2322,99 @@
         fs.value = '1';
         return;
       }
-      effectiveFloors(b).forEach((f) => {
+      const floors = effectiveFloors(b);
+      if (!floors.length) {
+        const o = new Option('Схемы этажей не заданы', '');
+        o.disabled = true;
+        fs.add(o);
+        fs.value = '';
+        return;
+      }
+      floors.forEach((f) => {
         fs.add(new Option(`Этаж ${f.level}`, String(f.level)));
       });
+      fs.value = String(floors[0].level);
+    }
+
+    function floorLodInteriorActive(bid) {
+      return floorLodInteriorByBid.get(bid) === true;
+    }
+
+    function shouldShowFloorPlanMesh(b, bid) {
+      if (!b || !hasConfigurableFloorGlbs(b)) return false;
+      const lod = buildingUsesFloorLod(b);
+      const interior = lod && floorLodInteriorActive(bid);
+      if (interior) return true;
+      if (lod) return false;
+      return document.getElementById('toggle-floor-plan').checked;
+    }
+
+    /** Ориентация GLB этажа: по умолчанию как старые «лист в XY»; явный floorPlanRotation — план уже в glTF-осях (часто XZ). */
+    function applyFloorPlanOrientation(plan, b) {
+      const fr = b.floorPlanRotation;
+      if (fr && typeof fr === 'object') {
+        plan.rotation.x = fr.x != null ? fr.x : 0;
+        plan.rotation.z = fr.z != null ? fr.z : 0;
+        plan.rotation.y = (b.rotationY || 0) + (fr.y != null ? fr.y : 0);
+      } else {
+        plan.rotation.x = -Math.PI / 2;
+        plan.rotation.y = b.rotationY || 0;
+        plan.rotation.z = 0;
+      }
+    }
+
+    /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на «подошву» корпуса. */
+    function alignFloorPlanToBuilding(plan, b, bid) {
+      const root = buildingMeshes.get(bid);
+      const ySurf = getBuildingWorldFloorPlanSurfaceY(bid);
+      const userS = Number(MODEL_CONFIG.FLOOR_PLAN_SCALE) || 1;
+      const pad = Number(MODEL_CONFIG.FLOOR_PLAN_FOOTPRINT_PAD) || 0.99;
+
+      const match =
+        b.floorPlanMatchBuildingFootprint === true ||
+        (buildingUsesFloorLod(b) && b.floorPlanMatchBuildingFootprint !== false);
+
+      plan.position.set(0, 0, 0);
+      plan.scale.setScalar(1);
+      plan.updateMatrixWorld(true);
+
+      if (!match || !root) {
+        plan.scale.setScalar(userS);
+        const xz = getBuildingHorizCenterXZ(bid);
+        plan.position.set(xz.x, ySurf, xz.z);
+        return;
+      }
+
+      const boxB = getBuildingRootWorldBox(bid);
+      if (!boxB) {
+        plan.scale.setScalar(userS);
+        const xz = getBuildingHorizCenterXZ(bid);
+        plan.position.set(xz.x, ySurf, xz.z);
+        return;
+      }
+      const bsz = boxB.getSize(new THREE.Vector3());
+      if (bsz.x < 1e-4 || bsz.z < 1e-4) {
+        plan.scale.setScalar(userS);
+        const xz = getBuildingHorizCenterXZ(bid);
+        plan.position.set(xz.x, ySurf, xz.z);
+        return;
+      }
+
+      let boxP = new THREE.Box3().setFromObject(plan);
+      let psz = boxP.getSize(new THREE.Vector3());
+      const px = Math.max(psz.x, 1e-6);
+      const pz = Math.max(psz.z, 1e-6);
+      const k = Math.min(bsz.x / px, bsz.z / pz) * pad * userS;
+      plan.scale.setScalar(k);
+      plan.updateMatrixWorld(true);
+      boxP = new THREE.Box3().setFromObject(plan);
+
+      const cB = boxB.getCenter(new THREE.Vector3());
+      const cP = boxP.getCenter(new THREE.Vector3());
+      plan.position.set(cB.x - cP.x, 0, cB.z - cP.z);
+      plan.updateMatrixWorld(true);
+      boxP = new THREE.Box3().setFromObject(plan);
+      plan.position.y += ySurf - boxP.min.y;
     }
 
     async function updateFloorPlan() {
@@ -2272,14 +2432,23 @@
       }
 
       const bid = document.getElementById('select-building').value;
-      const level = parseInt(document.getElementById('select-floor').value, 10);
+      const levelRaw = document.getElementById('select-floor').value;
+      const level = parseInt(levelRaw, 10);
       const b = buildingDataById.get(bid);
       if (!b) return;
 
       syncFloorRouteGroupPosition(b);
 
-      const floorDef = effectiveFloors(b).find((f) => f.level === level);
-      if (!floorDef || !document.getElementById('toggle-floor-plan').checked) {
+      const floors = effectiveFloors(b);
+      if (!floors.length || !Number.isFinite(level)) {
+        currentFloorMesh = null;
+        currentFloorBuildingId = bid;
+        currentFloorLevel = null;
+        return;
+      }
+
+      const floorDef = floors.find((f) => f.level === level);
+      if (!floorDef || !shouldShowFloorPlanMesh(b, bid)) {
         currentFloorMesh = null;
         currentFloorBuildingId = bid;
         currentFloorLevel = level;
@@ -2311,13 +2480,8 @@
         }
       });
 
-      plan.rotation.x = -Math.PI / 2;
-      plan.scale.setScalar(MODEL_CONFIG.FLOOR_PLAN_SCALE);
-      plan.position.set(
-        b.position.x,
-        MODEL_CONFIG.FLOOR_PLAN_Y_OFFSET,
-        b.position.z
-      );
+      applyFloorPlanOrientation(plan, b);
+      alignFloorPlanToBuilding(plan, b, bid);
 
       floorPlanRoot.add(plan);
       if (floorPlanRoot.children.indexOf(floorRouteGroup) >= 0) {
@@ -2330,6 +2494,67 @@
       endLoad();
     }
 
+    function syncFloorPlanToggleUi() {
+      const hint = document.getElementById('floor-plan-lod-hint');
+      const row = document.getElementById('floor-plan-toggle-row');
+      const cb = document.getElementById('toggle-floor-plan');
+      if (!cb) return;
+      const bid = document.getElementById('select-building').value;
+      const b = buildingDataById.get(bid);
+      const lod = buildingUsesFloorLod(b);
+      if (hint) hint.hidden = !(MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && lod);
+      if (row && MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true) {
+        row.hidden = !anyBuildingHasManualFloorToggle();
+      }
+      cb.disabled = lod;
+    }
+
+    function horizDistCameraToXZ(x, z) {
+      const p = activeCamera.position;
+      return Math.hypot(p.x - x, p.z - z);
+    }
+
+    function applyFloorInteriorLod() {
+      if (MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI !== true) return;
+
+      const dIn = Number(MODEL_CONFIG.FLOOR_PLAN_LOD_DISTANCE_IN) || 95;
+      const dOut = Math.max(
+        dIn + 4,
+        Number(MODEL_CONFIG.FLOOR_PLAN_LOD_DISTANCE_OUT) || dIn + 22
+      );
+
+      for (const b of MODEL_CONFIG.buildings) {
+        if (!buildingUsesFloorLod(b)) continue;
+        const bid = b.id;
+        const xz = getBuildingHorizCenterXZ(bid);
+        const d = horizDistCameraToXZ(xz.x, xz.z);
+        let inside = floorLodInteriorByBid.get(bid) === true;
+        if (inside) {
+          if (d > dOut) inside = false;
+        } else if (d < dIn) {
+          inside = true;
+        }
+        floorLodInteriorByBid.set(bid, inside);
+      }
+
+      const selBid = document.getElementById('select-building').value;
+      for (const b of MODEL_CONFIG.buildings) {
+        if (!buildingUsesFloorLod(b)) continue;
+        const bid = b.id;
+        const vis = buildingMeshes.get(bid)?.userData?.buildingVisual;
+        if (!vis) continue;
+        const hideShell = bid === selBid && floorLodInteriorActive(bid);
+        vis.visible = !hideShell;
+      }
+
+      const selB = buildingDataById.get(selBid);
+      const key = `${selBid}|${buildingUsesFloorLod(selB) && floorLodInteriorActive(selBid) ? 'in' : 'out'}`;
+      if (key !== lastFloorLodPlanKey) {
+        lastFloorLodPlanKey = key;
+        void updateFloorPlan();
+      }
+    }
+
     function appendInfo(html, isError) {
       const el = document.getElementById('info-panel');
       el.innerHTML = html;
@@ -2340,9 +2565,10 @@
       const b = buildingDataById.get(bid);
       if (!b) return;
       const rooms = (b.rooms || []).map((r) => r.label).join(', ');
+      const nFloors = effectiveFloors(b).length;
       const floorNote =
-        MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true
-          ? `Этажей: ${effectiveFloors(b).length}<br/>`
+        MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && nFloors > 0
+          ? `Этажей (схемы): ${nFloors}<br/>`
           : '';
       appendInfo(
         `<strong>${b.name}</strong><br/>${floorNote}Аудитории и точки: ${rooms || '—'}`
@@ -2358,6 +2584,8 @@
         highlightBuilding(buildingMeshes.get(bid), true);
       }
       showBuildingInfo(bid);
+      syncFloorPlanToggleUi();
+      applyFloorInteriorLod();
       const pt = document.getElementById('placement-target');
       if (pt) pt.value = 'campus';
       updateBuildingRotationReadout();
@@ -2699,6 +2927,7 @@
       requestAnimationFrame(animate);
       TWEEN.update(t);
       controls.update();
+      applyFloorInteriorLod();
       if (
         transformControls.visible &&
         transformControls.object &&
