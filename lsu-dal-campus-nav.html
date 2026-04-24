@@ -296,6 +296,36 @@
       line-height: 1.45;
     }
 
+    .room-editor-panel {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(125, 255, 179, 0.25);
+      background: rgba(18, 34, 28, 0.45);
+    }
+
+    .room-editor-panel[hidden] {
+      display: none !important;
+    }
+
+    .room-editor-panel .hint {
+      margin-top: 6px;
+      margin-bottom: 8px;
+      opacity: 0.72;
+    }
+
+    .room-editor-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: 1fr;
+    }
+
+    .room-editor-panel .mini {
+      font-size: 0.76rem;
+      opacity: 0.85;
+      margin: 0;
+    }
+
     .load-warning[hidden] { display: none !important; }
   </style>
   <script type="importmap">
@@ -399,6 +429,50 @@
     <div id="floor-plan-toggle-row" class="toggle-row" hidden>
       <span>Показать схему этажа (2D GLB)</span>
       <input type="checkbox" id="toggle-floor-plan" />
+    </div>
+
+    <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
+      <label>Разметка аудиторий (черновик)</label>
+      <div class="toggle-row">
+        <span>Режим разметки (клик по плану добавляет точку)</span>
+        <input type="checkbox" id="toggle-room-markup-mode" />
+      </div>
+      <div id="room-editor-panel" class="room-editor-panel" hidden>
+        <p class="hint">Работает на выбранных корпусе и этаже. Выберите точку из списка или кликните по плану, чтобы добавить новую.</p>
+        <div class="room-editor-grid">
+          <div class="field" style="margin:0;">
+            <label for="room-edit-select">Точки корпуса</label>
+            <select id="room-edit-select"></select>
+          </div>
+          <div class="field" style="margin:0;">
+            <label for="room-edit-label">Название аудитории/точки</label>
+            <input id="room-edit-label" type="text" placeholder="например: 101, Деканат, Холл" />
+          </div>
+          <div class="row" style="gap:8px;">
+            <div class="field" style="margin:0;flex:1;">
+              <label for="room-edit-floor">Этаж</label>
+              <input id="room-edit-floor" type="number" min="1" step="1" value="1" />
+            </div>
+            <div class="field" style="margin:0;flex:1;">
+              <label for="room-edit-type">Тип</label>
+              <select id="room-edit-type">
+                <option value="room">Аудитория/точка</option>
+                <option value="hall">Холл</option>
+                <option value="stairs">Лестница</option>
+              </select>
+            </div>
+          </div>
+          <p id="room-edit-coords" class="mini">Координаты: —</p>
+          <div class="row" style="gap:8px;flex-wrap:wrap;">
+            <button type="button" id="btn-room-update" class="primary">Сохранить точку</button>
+            <button type="button" id="btn-room-delete" class="ghost">Удалить точку</button>
+          </div>
+          <div class="row" style="gap:8px;flex-wrap:wrap;">
+            <button type="button" id="btn-room-export">Экспорт JSON</button>
+            <button type="button" id="btn-room-import" class="ghost">Импорт JSON</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="field">
@@ -779,6 +853,8 @@
       PERSIST_CAMPUS_LAYOUT: true,
       /** Смените ключ, если нужен отдельный пресет (или очистка старого формата). */
       CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v5-siniy-sk',
+      /** Черновая разметка аудиторий (id/label/floor/local) в localStorage. */
+      ROOM_MARKUP_STORAGE_KEY: 'lsu-dal-campus-nav-room-markup-v1',
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
       FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
       /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
@@ -2087,6 +2163,14 @@
     }
 
     function worldFromFloorLocal(building, floorLevel, local) {
+      if (
+        currentFloorMesh &&
+        currentFloorBuildingId === building.id &&
+        Number(currentFloorLevel) === Number(floorLevel)
+      ) {
+        const v = new THREE.Vector3(local.x, 0, local.z);
+        return currentFloorMesh.localToWorld(v);
+      }
       const xz = getBuildingHorizCenterXZ(building.id);
       const bx = xz.x;
       const bz = xz.z;
@@ -2156,6 +2240,408 @@
       ui.appendChild(hint);
     }
 
+    const roomMarkerGroup = new THREE.Group();
+    scene.add(roomMarkerGroup);
+
+    let roomMarkupMode = false;
+    let selectedRoomMarkupId = null;
+    let draggingRoomMarkupId = null;
+    let roomDragMoved = false;
+    let roomDragPointerId = null;
+
+    function roomMarkupStorageKey() {
+      return MODEL_CONFIG.ROOM_MARKUP_STORAGE_KEY || 'lsu-dal-campus-nav-room-markup-v1';
+    }
+
+    function sanitizeRoomRecord(r) {
+      if (!r || typeof r !== 'object') return null;
+      const id = String(r.id || '').trim();
+      const label = String(r.label || '').trim();
+      const floor = Number(r.floor);
+      const lx = Number(r.local?.x);
+      const lz = Number(r.local?.z);
+      if (!id || !label || !Number.isFinite(floor) || !Number.isFinite(lx) || !Number.isFinite(lz)) {
+        return null;
+      }
+      return {
+        id,
+        label,
+        floor: Math.max(1, Math.round(floor)),
+        local: { x: lx, z: lz },
+        isStairs: r.isStairs === true
+      };
+    }
+
+    function applyPersistedRoomMarkup() {
+      try {
+        const raw = localStorage.getItem(roomMarkupStorageKey());
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return;
+        for (const b of MODEL_CONFIG.buildings) {
+          const list = parsed[b.id];
+          if (!Array.isArray(list)) continue;
+          const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
+          if (normalized.length) b.rooms = normalized;
+        }
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось прочитать разметку аудиторий из localStorage', err);
+      }
+    }
+
+    function savePersistedRoomMarkup() {
+      const payload = {};
+      for (const b of MODEL_CONFIG.buildings) {
+        payload[b.id] = (b.rooms || [])
+          .map(sanitizeRoomRecord)
+          .filter(Boolean)
+          .map((r) => ({
+            id: r.id,
+            label: r.label,
+            floor: r.floor,
+            local: { x: r.local.x, z: r.local.z },
+            ...(r.isStairs ? { isStairs: true } : {})
+          }));
+      }
+      try {
+        localStorage.setItem(roomMarkupStorageKey(), JSON.stringify(payload));
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось сохранить разметку аудиторий в localStorage', err);
+      }
+    }
+
+    function clearRoomMarkupVisuals() {
+      while (roomMarkerGroup.children.length) {
+        const c = roomMarkerGroup.children[0];
+        roomMarkerGroup.remove(c);
+        disposeSubtree(c);
+      }
+    }
+
+    function roomKindOf(r) {
+      if (r.isStairs) return 'stairs';
+      const low = String(r.label || '').toLowerCase();
+      if (low.includes('холл')) return 'hall';
+      return 'room';
+    }
+
+    function roomColorForKind(kind) {
+      if (kind === 'stairs') return 0xf59e0b;
+      if (kind === 'hall') return 0x67e8f9;
+      return 0x34d399;
+    }
+
+    function currentEditorBuilding() {
+      const bid = document.getElementById('select-building').value;
+      return buildingDataById.get(bid) || null;
+    }
+
+    function currentEditorFloor() {
+      const v = parseInt(document.getElementById('select-floor').value, 10);
+      return Number.isFinite(v) ? v : 1;
+    }
+
+    function roomDisplayName(r) {
+      const prefix = r.isStairs ? 'Лестница' : String(r.label || '');
+      return `${prefix} (эт.${r.floor})`;
+    }
+
+    function refreshRoomEditorSelect() {
+      const sel = document.getElementById('room-edit-select');
+      if (!sel) return;
+      const b = currentEditorBuilding();
+      sel.innerHTML = '';
+      if (!b) return;
+      const rooms = (b.rooms || []).slice().sort((a, z) => {
+        if ((a.floor || 0) !== (z.floor || 0)) return (a.floor || 0) - (z.floor || 0);
+        return String(a.label || '').localeCompare(String(z.label || ''), undefined, { numeric: true });
+      });
+      for (const r of rooms) {
+        sel.add(new Option(roomDisplayName(r), r.id));
+      }
+      if (selectedRoomMarkupId && rooms.some((r) => r.id === selectedRoomMarkupId)) {
+        sel.value = selectedRoomMarkupId;
+      } else if (rooms.length) {
+        selectedRoomMarkupId = rooms[0].id;
+        sel.value = selectedRoomMarkupId;
+      } else {
+        selectedRoomMarkupId = null;
+      }
+    }
+
+    function selectedMarkupRoom() {
+      const b = currentEditorBuilding();
+      if (!b || !selectedRoomMarkupId) return null;
+      return (b.rooms || []).find((r) => r.id === selectedRoomMarkupId) || null;
+    }
+
+    function fillRoomEditorFields() {
+      const b = currentEditorBuilding();
+      const r = selectedMarkupRoom();
+      const label = document.getElementById('room-edit-label');
+      const floor = document.getElementById('room-edit-floor');
+      const type = document.getElementById('room-edit-type');
+      const coords = document.getElementById('room-edit-coords');
+      const btnUpd = document.getElementById('btn-room-update');
+      const btnDel = document.getElementById('btn-room-delete');
+
+      const enabled = !!(b && r);
+      label.disabled = !enabled;
+      floor.disabled = !enabled;
+      type.disabled = !enabled;
+      btnUpd.disabled = !enabled;
+      btnDel.disabled = !enabled;
+
+      if (!enabled) {
+        label.value = '';
+        floor.value = String(currentEditorFloor());
+        type.value = 'room';
+        coords.textContent = 'Координаты: —';
+        return;
+      }
+      label.value = r.label || '';
+      floor.value = String(r.floor || 1);
+      type.value = r.isStairs ? 'stairs' : roomKindOf(r);
+      coords.textContent = `Координаты: x=${(r.local?.x ?? 0).toFixed(2)}, z=${(r.local?.z ?? 0).toFixed(2)}`;
+    }
+
+    function refreshRoomMarkupVisuals() {
+      clearRoomMarkupVisuals();
+      if (!roomMarkupMode) return;
+      const b = currentEditorBuilding();
+      if (!b) return;
+      const floorNow = currentEditorFloor();
+      for (const r of b.rooms || []) {
+        if (!r.local || !Number.isFinite(Number(r.local.x)) || !Number.isFinite(Number(r.local.z))) continue;
+        const kind = roomKindOf(r);
+        const geom = new THREE.SphereGeometry(0.14, 10, 10);
+        const isCurrentFloor = Number(r.floor) === Number(floorNow);
+        const mat = new THREE.MeshStandardMaterial({
+          color: roomColorForKind(kind),
+          transparent: true,
+          opacity: isCurrentFloor ? 0.95 : 0.35,
+          emissive: selectedRoomMarkupId === r.id ? 0x1d4ed8 : 0x000000,
+          emissiveIntensity: selectedRoomMarkupId === r.id ? 0.75 : 0
+        });
+        const marker = new THREE.Mesh(geom, mat);
+        marker.castShadow = false;
+        marker.receiveShadow = false;
+        marker.position.copy(worldFromFloorLocal(b, r.floor || 1, r.local));
+        marker.userData.roomMarkupId = r.id;
+        marker.userData.roomMarkupFloor = r.floor || 1;
+        roomMarkerGroup.add(marker);
+      }
+    }
+
+    function roomWorldYForFloor(building, floorLevel) {
+      const yOff = getBuildingWorldFloorPlanSurfaceY(building.id);
+      const fh = MODEL_CONFIG.FLOOR_HEIGHT_METERS;
+      return yOff + 0.2 + (floorLevel - 1) * fh;
+    }
+
+    function refreshRoomMarkupUi() {
+      const panel = document.getElementById('room-editor-panel');
+      panel.hidden = !roomMarkupMode;
+      refreshRoomEditorSelect();
+      fillRoomEditorFields();
+      refreshRoomMarkupVisuals();
+    }
+
+    function makeRoomId(bid) {
+      const stamp = Date.now().toString(36).slice(-5);
+      const rnd = Math.random().toString(36).slice(2, 5);
+      return `${bid}-rm-${stamp}${rnd}`;
+    }
+
+    function addRoomAtCurrentFloor(local) {
+      const b = currentEditorBuilding();
+      if (!b) return;
+      const floor = currentEditorFloor();
+      if (!Array.isArray(b.rooms)) b.rooms = [];
+      const room = {
+        id: makeRoomId(b.id),
+        label: `Новая точка ${b.rooms.length + 1}`,
+        floor,
+        local: {
+          x: Number(local.x.toFixed(2)),
+          z: Number(local.z.toFixed(2))
+        }
+      };
+      b.rooms.push(room);
+      selectedRoomMarkupId = room.id;
+      indexRooms();
+      populateRouteSelects();
+      savePersistedRoomMarkup();
+      refreshRoomMarkupUi();
+      appendInfo(`Добавлена точка «${room.label}» в ${b.name}, этаж ${floor}.`, false);
+    }
+
+    function updateSelectedMarkupRoomFromFields() {
+      const b = currentEditorBuilding();
+      const r = selectedMarkupRoom();
+      if (!b || !r) return;
+      const label = document.getElementById('room-edit-label').value.trim();
+      const floorVal = parseInt(document.getElementById('room-edit-floor').value, 10);
+      const kind = document.getElementById('room-edit-type').value;
+      if (!label) {
+        appendInfo('Название точки не может быть пустым.', true);
+        return;
+      }
+      r.label = label;
+      r.floor = Number.isFinite(floorVal) ? Math.max(1, floorVal) : 1;
+      r.isStairs = kind === 'stairs';
+      indexRooms();
+      populateRouteSelects();
+      savePersistedRoomMarkup();
+      refreshRoomMarkupUi();
+      appendInfo(`Точка «${r.label}» сохранена.`, false);
+    }
+
+    function deleteSelectedMarkupRoom() {
+      const b = currentEditorBuilding();
+      const r = selectedMarkupRoom();
+      if (!b || !r) return;
+      b.rooms = (b.rooms || []).filter((x) => x.id !== r.id);
+      selectedRoomMarkupId = b.rooms[0]?.id || null;
+      indexRooms();
+      populateRouteSelects();
+      savePersistedRoomMarkup();
+      refreshRoomMarkupUi();
+      appendInfo(`Точка «${r.label}» удалена.`, false);
+    }
+
+    function exportRoomsOfCurrentBuilding() {
+      const b = currentEditorBuilding();
+      if (!b) return;
+      const payload = {
+        buildingId: b.id,
+        buildingName: b.name,
+        rooms: (b.rooms || []).map((r) => ({
+          id: r.id,
+          label: r.label,
+          floor: r.floor,
+          local: { x: r.local.x, z: r.local.z },
+          ...(r.isStairs ? { isStairs: true } : {})
+        }))
+      };
+      const text = JSON.stringify(payload, null, 2);
+      navigator.clipboard
+        .writeText(text)
+        .then(() => appendInfo(`JSON аудиторий для «${b.name}» скопирован в буфер.`, false))
+        .catch(() => window.prompt('Скопируйте JSON вручную (Ctrl+C):', text));
+    }
+
+    function importRoomsToCurrentBuilding() {
+      const b = currentEditorBuilding();
+      if (!b) return;
+      const raw = window.prompt(
+        `Вставьте JSON с rooms для «${b.name}».\nФормат: { "rooms": [ { "id": "...", "label": "...", "floor": 1, "local": { "x": 0, "z": 0 } } ] }`
+      );
+      if (raw == null) return;
+      try {
+        const parsed = JSON.parse(raw);
+        const list = Array.isArray(parsed) ? parsed : parsed?.rooms;
+        if (!Array.isArray(list)) throw new Error('Ожидался массив rooms');
+        const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
+        if (!normalized.length) throw new Error('Нет валидных точек');
+        b.rooms = normalized;
+        selectedRoomMarkupId = b.rooms[0].id;
+        indexRooms();
+        populateRouteSelects();
+        savePersistedRoomMarkup();
+        refreshRoomMarkupUi();
+        appendInfo(`Импортировано ${normalized.length} точек для «${b.name}».`, false);
+      } catch (err) {
+        appendInfo(`Ошибка импорта JSON: ${err?.message || err}`, true);
+      }
+    }
+
+    function floorPlanWorldPlane() {
+      if (!currentFloorMesh) return null;
+      const n = new THREE.Vector3(0, 1, 0).applyQuaternion(currentFloorMesh.quaternion).normalize();
+      const p = currentFloorMesh.localToWorld(new THREE.Vector3(0, 0, 0));
+      const plane = new THREE.Plane();
+      plane.setFromNormalAndCoplanarPoint(n, p);
+      return plane;
+    }
+
+    function tryHandleRoomMarkupClick(ev) {
+      if (!roomMarkupMode) return false;
+      const markerHits = raycaster.intersectObjects(roomMarkerGroup.children, true);
+      if (markerHits.length) {
+        let o = markerHits[0].object;
+        while (o && !o.userData?.roomMarkupId) o = o.parent;
+        const rid = o?.userData?.roomMarkupId;
+        if (rid) {
+          selectedRoomMarkupId = rid;
+          draggingRoomMarkupId = rid;
+          roomDragMoved = false;
+          roomDragPointerId = ev?.pointerId ?? null;
+          controls.enabled = false;
+          if (ev?.pointerId != null && renderer?.domElement?.setPointerCapture) {
+            renderer.domElement.setPointerCapture(ev.pointerId);
+          }
+          refreshRoomMarkupUi();
+          return true;
+        }
+      }
+
+      const b = currentEditorBuilding();
+      if (!b || !currentFloorMesh) {
+        appendInfo('Для разметки выберите корпус и дождитесь показа схемы этажа.', true);
+        return true;
+      }
+      const plane = floorPlanWorldPlane();
+      if (!plane) return true;
+      const worldPoint = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, worldPoint)) return true;
+      const local = currentFloorMesh.worldToLocal(worldPoint.clone());
+      addRoomAtCurrentFloor(local);
+      return true;
+    }
+
+    function onPointerMove(ev) {
+      if (!roomMarkupMode || !draggingRoomMarkupId) return;
+      const b = currentEditorBuilding();
+      const r = selectedMarkupRoom();
+      if (!b || !r || !currentFloorMesh) return;
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, activeCamera);
+
+      const plane = floorPlanWorldPlane();
+      if (!plane) return;
+      const worldPoint = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(plane, worldPoint)) return;
+      const local = currentFloorMesh.worldToLocal(worldPoint.clone());
+      r.local.x = Number(local.x.toFixed(2));
+      r.local.z = Number(local.z.toFixed(2));
+      roomDragMoved = true;
+      fillRoomEditorFields();
+      refreshRoomMarkupVisuals();
+    }
+
+    function onPointerUp() {
+      if (!draggingRoomMarkupId) return;
+      draggingRoomMarkupId = null;
+      if (
+        roomDragPointerId != null &&
+        renderer?.domElement?.hasPointerCapture?.(roomDragPointerId) &&
+        renderer?.domElement?.releasePointerCapture
+      ) {
+        renderer.domElement.releasePointerCapture(roomDragPointerId);
+      }
+      roomDragPointerId = null;
+      controls.enabled = true;
+      indexRooms();
+      populateRouteSelects();
+      savePersistedRoomMarkup();
+      if (roomDragMoved) appendInfo('Координаты точки обновлены перетаскиванием.', false);
+      roomDragMoved = false;
+    }
+
     const roomIndex = new Map();
 
     function indexRooms() {
@@ -2194,6 +2680,7 @@
           MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && anyBuildingHasManualFloorToggle()
         );
       }
+      applyPersistedRoomMarkup();
       indexRooms();
       await loadDistrictMapIfConfigured();
       const palette = [0x8b9dc3, 0xa68bc4, 0x7eb8da];
@@ -2566,6 +3053,7 @@
 
       if (MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI !== true) {
         currentFloorMesh = null;
+        refreshRoomMarkupVisuals();
         return;
       }
 
@@ -2573,7 +3061,10 @@
       const levelRaw = document.getElementById('select-floor').value;
       const level = parseInt(levelRaw, 10);
       const b = buildingDataById.get(bid);
-      if (!b) return;
+      if (!b) {
+        refreshRoomMarkupVisuals();
+        return;
+      }
 
       syncFloorRouteGroupPosition(b);
 
@@ -2582,6 +3073,7 @@
         currentFloorMesh = null;
         currentFloorBuildingId = bid;
         currentFloorLevel = null;
+        refreshRoomMarkupVisuals();
         return;
       }
 
@@ -2590,6 +3082,7 @@
         currentFloorMesh = null;
         currentFloorBuildingId = bid;
         currentFloorLevel = level;
+        refreshRoomMarkupVisuals();
         return;
       }
 
@@ -2630,6 +3123,7 @@
       currentFloorMesh = plan;
       currentFloorBuildingId = bid;
       currentFloorLevel = level;
+      refreshRoomMarkupVisuals();
     }
 
     function syncFloorPlanToggleUi() {
@@ -2729,6 +3223,7 @@
       updateBuildingRotationReadout();
       updateBuildingSizeReadout();
       refreshTransformAttachment();
+      refreshRoomMarkupUi();
     }
 
     function updateBuildingSizeReadout() {
@@ -2813,6 +3308,7 @@
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, activeCamera);
+      if (tryHandleRoomMarkupClick(ev)) return;
       const roots = [...buildingMeshes.values(), ...contextBuildingMeshes.values()];
       const hits = raycaster.intersectObjects(roots, true);
       if (!hits.length) return;
@@ -2849,6 +3345,9 @@
     }
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointerleave', onPointerUp);
 
     document.getElementById('select-building').addEventListener('change', () => {
       updateFloorSelect();
@@ -2891,11 +3390,44 @@
     updateDistrictScaleReadout();
 
     document.getElementById('select-floor').addEventListener('change', () => {
+      refreshRoomMarkupUi();
       void updateFloorPlan();
     });
 
     document.getElementById('toggle-floor-plan').addEventListener('change', () => {
       void updateFloorPlan();
+    });
+
+    document.getElementById('toggle-room-markup-mode').addEventListener('change', (e) => {
+      roomMarkupMode = e.target.checked;
+      if (roomMarkupMode) {
+        const b = currentEditorBuilding();
+        const floor = currentEditorFloor();
+        appendInfo(
+          `Режим разметки включён. Корпус: <strong>${b?.name || '—'}</strong>, этаж: <strong>${floor}</strong>. Клик по схеме добавляет точку.`,
+          false
+        );
+      } else {
+        appendInfo('Режим разметки выключен.', false);
+      }
+      refreshRoomMarkupUi();
+    });
+    document.getElementById('room-edit-select').addEventListener('change', (e) => {
+      selectedRoomMarkupId = e.target.value || null;
+      fillRoomEditorFields();
+      refreshRoomMarkupVisuals();
+    });
+    document.getElementById('btn-room-update').addEventListener('click', () => {
+      updateSelectedMarkupRoomFromFields();
+    });
+    document.getElementById('btn-room-delete').addEventListener('click', () => {
+      deleteSelectedMarkupRoom();
+    });
+    document.getElementById('btn-room-export').addEventListener('click', () => {
+      exportRoomsOfCurrentBuilding();
+    });
+    document.getElementById('btn-room-import').addEventListener('click', () => {
+      importRoomsToCurrentBuilding();
     });
 
     document.getElementById('btn-reset-camera').addEventListener('click', () => {
@@ -3080,6 +3612,7 @@
     await loadCampus();
     setSelectedBuilding(MODEL_CONFIG.buildings[0]?.id);
     await updateFloorPlan();
+    refreshRoomMarkupUi();
     animate();
 
     // Экспорт в window для отладки в консоли
