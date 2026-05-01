@@ -749,6 +749,20 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '8k',
+        /** П-образный корпус: центроид по XZ для pivot/gizmo и привязки схем (см. 4к). */
+        embeddedPivotMethod: 'centroid',
+        floorPlanLod: true,
+        /** +180° к yaw узла «8k» (см. floorPlanSynchronizeDistrictShellQuaternion). */
+        floorPlanRotation: { x: 0, y: Math.PI, z: 0 },
+        /** Поворот плана в мире как у узла «8k» в макете; иначе схемы остаются по осям сцены и «мелкие/косые». */
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/8k/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/8k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/8k/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/8k/4f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
