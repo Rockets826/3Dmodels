@@ -550,7 +550,9 @@
      *   floors: [{ level: 1, modelPath: '…' }], // опционально, если ENABLE_FLOOR_PLANS_UI
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
-     *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
+     *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: yaw плана с узлом тела (план горизонтальный в XZ; не полный quaternion).
+     *   floorPlanUnifiedFootprintScale: false, // по умолчанию при 2+ floors: один масштаб по max охвату всех GLB и гориз. сдвиг к опорному этажу (если каждый этаж считать отдельно — «плывут» между уровнями).
+     *   floorPlanWorldNudge: { x: 0, z: 5 }, // м, сдвиг схем этажей в мире после автопривязки (Z — «синяя» ось гл. сцены; знак подбирается).
      *   floorPlanMatchBuildingFootprint: true, // подогнать масштаб и центр под bbox корпуса (для LOD по умолчанию true; false — только FLOOR_PLAN_SCALE + центр)
      *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
@@ -644,6 +646,20 @@
         embeddedPivotMethod: 'centroid',
         // Ручной сдвиг pivot/gizmo в мире (м): поджать к телу корпуса по синей оси.
         embeddedPivotNudge: { x: 0, z: -6 },
+        floorPlanLod: true,
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        /** Узел «4k» в макете с сильным масштабом/наклоном тела; yaw подтягивается к телу как у корпуса 5 (план остаётся по XZ). */
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        floorPlanMatchBuildingFootprint: true,
+        // Поджать схемы к телу: мир. Z (синяя стрелка gizmo), см. floorPlanWorldNudge в шаблоне MANUAL_BUILDINGS.
+        floorPlanWorldNudge: { x: 0, z: 2 },
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/4k/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/4k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/4k/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/4k/4f.glb' },
+          { level: 5, modelPath: 'systemaetajey/4k/5f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
@@ -1045,10 +1061,11 @@
     }
 
     const _tmpBox3 = new THREE.Box3();
-    const _floorShellWorldQ = new THREE.Quaternion();
-    const _floorOrientEuler = new THREE.Euler(0, 0, 0);
     const _floorPlanSizingBox = new THREE.Box3();
     const _floorPlanFullBox = new THREE.Box3();
+    /** Один масштаб/якорь для всех этажей корпуса (под 4к и др., где GLB этажей с разным bbox). */
+    const floorPlanFootprintUnifyCache = new Map();
+    const floorPlanFootprintUnifyPending = new Map();
 
     /** Запасной AABB по геометрии мешей (если setFromObject дал пустой бокс — модель «пропадает»). */
     function expandWorldBoxFromMeshes(root, box) {
@@ -2075,6 +2092,15 @@
 
     function getBuildingHorizCenterXZ(bid) {
       const b = buildingDataById.get(bid);
+      const root = buildingMeshes.get(bid);
+      /**
+       * Корпус из макета: pivot (root.position) после recenterEmbeddedPivotAtFootXZ может быть
+       * центроидом по XZ, а не центром AABB — для «Г»/«Н» это разные точки. Этажные планы и маршруты
+       * должны попадать на pivot, иначе корпус «там», схемы «в центре прямоугольника вокруг дома».
+       */
+      if (root?.userData?.embeddedFromDistrict) {
+        return { x: root.position.x, z: root.position.z };
+      }
       const box = getBuildingRootWorldBox(bid);
       if (box) {
         const c = box.getCenter(new THREE.Vector3());
@@ -3028,6 +3054,84 @@
       return outBox;
     }
 
+    function disposeProbedFloorScene(root) {
+      root.traverse((o) => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          const mats = o.material;
+          if (Array.isArray(mats)) mats.forEach((m) => m.dispose?.());
+          else mats?.dispose?.();
+        }
+      });
+    }
+
+    /** Yaw вокруг мировой Y стабильнее, чем Euler из quaternion при неравномерном масштабе узла (~4к, ~5к). */
+    function districtShellYawFromMatrixWorld(shell) {
+      shell.updateMatrixWorld(true);
+      const e = shell.matrixWorld.elements;
+      const xLen = Math.hypot(e[0], e[2]);
+      const zLen = Math.hypot(e[8], e[10]);
+      if (xLen >= zLen) return Math.atan2(e[2], e[0]);
+      return Math.atan2(e[10], e[8]);
+    }
+
+    function shouldUnifyFloorPlanFootprint(b) {
+      if (!b) return false;
+      if (b.floorPlanUnifiedFootprintScale === false) return false;
+      return effectiveFloors(b).length > 1;
+    }
+
+    async function ensureFloorPlanFootprintUnifyCache(b) {
+      if (!shouldUnifyFloorPlanFootprint(b)) return;
+      const bid = b.id;
+      if (floorPlanFootprintUnifyCache.get(bid)?.done) return;
+      if (floorPlanFootprintUnifyPending.has(bid)) {
+        await floorPlanFootprintUnifyPending.get(bid);
+        return;
+      }
+      const work = (async () => {
+        const floors = effectiveFloors(b);
+        let maxPx = 0;
+        let maxPz = 0;
+        const centersByLevel = new Map();
+        const refLevel = floors[0].level;
+        for (let i = 0; i < floors.length; i++) {
+          const fd = floors[i];
+          const lev = fd.level;
+          const url = resolveModelPath(fd.modelPath);
+          if (!url) continue;
+          const scene = await loadGLB(url, bid, `footprint-probe ${lev}`);
+          if (!scene) continue;
+          applyFloorPlanOrientation(scene, b);
+          scene.updateMatrixWorld(true);
+          floorPlanSizingWorldBox(scene, _floorPlanSizingBox);
+          if (_floorPlanSizingBox.isEmpty()) {
+            disposeProbedFloorScene(scene);
+            continue;
+          }
+          const sz = _floorPlanSizingBox.getSize(new THREE.Vector3());
+          maxPx = Math.max(maxPx, sz.x);
+          maxPz = Math.max(maxPz, sz.z);
+          const c = _floorPlanSizingBox.getCenter(new THREE.Vector3());
+          centersByLevel.set(lev, { x: c.x, z: c.z });
+          disposeProbedFloorScene(scene);
+        }
+        floorPlanFootprintUnifyCache.set(bid, {
+          done: true,
+          maxPx,
+          maxPz,
+          refLevel,
+          centersByLevel
+        });
+      })();
+      floorPlanFootprintUnifyPending.set(bid, work);
+      try {
+        await work;
+      } finally {
+        floorPlanFootprintUnifyPending.delete(bid);
+      }
+    }
+
     /**
      * Для корпуса из макета: совмещаем только рыскание (yaw) с узлом тела по имени «5к» и т.п.; план остаётся в плоскости XZ, как без «наклона оболочки».
      * Полный world-quaternion узла задаёт также наклон фасада в Blender — если скопировать целиком, GLB этажа (лист по XZ) «встаёт столбом» по оси высоты.
@@ -3042,12 +3146,7 @@
       if (!name || typeof root.getObjectByName !== 'function') return false;
       const shell = root.getObjectByName(name);
       if (!shell) return false;
-      shell.updateMatrixWorld(true);
-      _floorOrientEuler.setFromQuaternion(
-        shell.getWorldQuaternion(_floorShellWorldQ),
-        'YXZ'
-      );
-      const yaw = _floorOrientEuler.y;
+      const yaw = districtShellYawFromMatrixWorld(shell);
       const fr = b.floorPlanRotation;
       if (fr && typeof fr === 'object') {
         plan.rotation.x = fr.x != null ? fr.x : 0;
@@ -3079,8 +3178,8 @@
       }
     }
 
-    /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на «подошву» корпуса. */
-    function alignFloorPlanToBuilding(plan, b, bid) {
+    /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на «подошву» корпуса. floorLevel — для общего охвата этажей. */
+    function alignFloorPlanToBuilding(plan, b, bid, floorLevel) {
       const root = buildingMeshes.get(bid);
       const ySurf = getBuildingWorldFloorPlanSurfaceY(bid);
       const userS = Number(MODEL_CONFIG.FLOOR_PLAN_SCALE) || 1;
@@ -3118,16 +3217,43 @@
 
       floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
       let psz = _floorPlanSizingBox.getSize(new THREE.Vector3());
-      const px = Math.max(psz.x, 1e-6);
-      const pz = Math.max(psz.z, 1e-6);
-      const k = Math.min(bsz.x / px, bsz.z / pz) * pad * userS;
+      let pxUse = Math.max(psz.x, 1e-6);
+      let pzUse = Math.max(psz.z, 1e-6);
+      const uni = floorPlanFootprintUnifyCache.get(bid);
+      if (uni && uni.done && shouldUnifyFloorPlanFootprint(b) && uni.maxPx > 0 && uni.maxPz > 0) {
+        pxUse = Math.max(uni.maxPx, 1e-6);
+        pzUse = Math.max(uni.maxPz, 1e-6);
+      }
+      const k = Math.min(bsz.x / pxUse, bsz.z / pzUse) * pad * userS;
       plan.scale.setScalar(k);
       plan.updateMatrixWorld(true);
       floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
 
-      const cB = boxB.getCenter(new THREE.Vector3());
+      const xzAnch = getBuildingHorizCenterXZ(bid);
       const cP = _floorPlanSizingBox.getCenter(new THREE.Vector3());
-      plan.position.set(cB.x - cP.x, 0, cB.z - cP.z);
+      let cx = xzAnch.x - cP.x;
+      let cz = xzAnch.z - cP.z;
+      if (
+        uni &&
+        uni.done &&
+        shouldUnifyFloorPlanFootprint(b) &&
+        floorLevel != null &&
+        Number.isFinite(floorLevel) &&
+        uni.centersByLevel?.size > 0
+      ) {
+        const refC = uni.centersByLevel.get(uni.refLevel);
+        const curC = uni.centersByLevel.get(floorLevel);
+        if (refC && curC) {
+          cx += (refC.x - curC.x) * k;
+          cz += (refC.z - curC.z) * k;
+        }
+      }
+      const wn = b.floorPlanWorldNudge;
+      if (wn && typeof wn === 'object') {
+        cx += Number(wn.x) || 0;
+        cz += Number(wn.z) || 0;
+      }
+      plan.position.set(cx, 0, cz);
       plan.updateMatrixWorld(true);
       _floorPlanFullBox.setFromObject(plan);
       plan.position.y += ySurf - _floorPlanFullBox.min.y;
@@ -3177,6 +3303,8 @@
         return;
       }
 
+      await ensureFloorPlanFootprintUnifyCache(b);
+
       const url = resolveModelPath(floorDef.modelPath);
       let plan = await loadGLB(url, bid, `floor ${level}`);
       if (!plan) {
@@ -3204,7 +3332,7 @@
       });
 
       applyFloorPlanOrientation(plan, b);
-      alignFloorPlanToBuilding(plan, b, bid);
+      alignFloorPlanToBuilding(plan, b, bid, level);
 
       floorPlanRoot.add(plan);
       if (floorPlanRoot.children.indexOf(floorRouteGroup) >= 0) {
