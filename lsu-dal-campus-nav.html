@@ -547,7 +547,7 @@
      *   modelPath: '3D/file.glb', // или '' + embedInDistrictPrefix: '5k'
      *   modelScale: 1,
      *   disabled: false,
-     *   floors: [{ level: 1, modelPath: '…' }], // опционально, если ENABLE_FLOOR_PLANS_UI
+     *   floors: [{ level: 1, modelPath: '…' }], // опционально; у элемента — floorPlanRotationY: Math.PI/2 (рад.), доп. поворот вокруг Y только для этого GLB (разный экспорт осей у этажей).
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
      *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: yaw плана с узлом тела (план горизонтальный в XZ; не полный quaternion).
@@ -722,7 +722,18 @@
         position: { x: 0, z: 0 },
         rotationY: 0,
         modelPath: '',
-        embedInDistrictPrefix: '7kw',
+        /** В maket: узел «7k» + дочерние окна/7kw…; префикс ^7k(\.|$|w). Схемы — как у 1к по ориентации; без unify: у 1f/2f/3f разный охват в GLB, общий maxPx/maxPz делал все этажи мелкими и сдвигал 1-й. */
+        embedInDistrictPrefix: '7k',
+        floorPlanLod: true,
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        floorPlanUnifiedFootprintScale: false,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          // 1f в Blender вытянут по Z, 2f/3f — по X; без +90° подгон min(bsz/plan) даёт мелкий косой план.
+          { level: 1, modelPath: 'systemaetajey/7k/1f.glb', floorPlanRotationY: Math.PI / 2 },
+          { level: 2, modelPath: 'systemaetajey/7k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/7k/3f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
@@ -1394,6 +1405,7 @@
 
     /**
      * Вырезает из загруженного макета все узлы, чьи имена подходят под правило корпуса, и группирует под pivot в сцене.
+     * Если в glTF «7kw» вложены в «7k», в hits попадут и родитель, и дети — второй attach() отрывает детей от тела (окна «отклеиваются»). Берём только корни поддерева среди совпадений.
      * @returns {THREE.Group|null}
      */
     function extractEmbeddedBuildingFromDistrict(b) {
@@ -1405,7 +1417,16 @@
         hits.push(o);
       });
       hits.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      if (!hits.length) {
+      const hitSet = new Set(hits);
+      const roots = hits.filter((node) => {
+        let p = node.parent;
+        while (p && p !== districtMapObject) {
+          if (hitSet.has(p)) return false;
+          p = p.parent;
+        }
+        return true;
+      });
+      if (!roots.length) {
         console.warn(
           `[LSU Nav] В макете не найдены узлы для «${b.name}» (${b.id}). Проверьте embedInDistrict* в MANUAL_BUILDINGS.`
         );
@@ -1414,8 +1435,8 @@
       const pivot = new THREE.Group();
       pivot.userData.buildingId = b.id;
       pivot.userData.embeddedFromDistrict = true;
-      for (let i = 0; i < hits.length; i++) {
-        pivot.attach(hits[i]);
+      for (let i = 0; i < roots.length; i++) {
+        pivot.attach(roots[i]);
       }
       pivot.traverse((o) => {
         restoreInteractiveRaycast(o);
@@ -3110,7 +3131,7 @@
           if (!url) continue;
           const scene = await loadGLB(url, bid, `footprint-probe ${lev}`);
           if (!scene) continue;
-          applyFloorPlanOrientation(scene, b);
+          applyFloorPlanOrientation(scene, b, fd);
           scene.updateMatrixWorld(true);
           floorPlanSizingWorldBox(scene, _floorPlanSizingBox);
           if (_floorPlanSizingBox.isEmpty()) {
@@ -3169,10 +3190,23 @@
       return true;
     }
 
-    /** Ориентация GLB этажа: по умолчанию как старые «лист в XY»; явный floorPlanRotation — план уже в glTF-осях (часто XZ). */
-    function applyFloorPlanOrientation(plan, b) {
+    /** Доп. поворот вокруг Y для одного этажа (разный экспорт главной оси плана в GLB). */
+    function applyFloorPlanPerLevelRotation(plan, floorDef) {
+      if (!floorDef || typeof floorDef !== 'object') return;
+      const dy = Number(floorDef.floorPlanRotationY);
+      if (Number.isFinite(dy) && dy !== 0) {
+        plan.rotation.y += dy;
+        plan.updateMatrixWorld(true);
+      }
+    }
+
+    /** Ориентация GLB этажа: по умолчанию как старые «лист в XY»; явный floorPlanRotation — план уже в glTF-осях (часто XZ). floorDef — элемент floors[] (опц. floorPlanRotationY). */
+    function applyFloorPlanOrientation(plan, b, floorDef) {
       const root = buildingMeshes.get(b.id);
-      if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) return;
+      if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) {
+        applyFloorPlanPerLevelRotation(plan, floorDef);
+        return;
+      }
 
       const fr = b.floorPlanRotation;
       if (fr && typeof fr === 'object') {
@@ -3184,6 +3218,7 @@
         plan.rotation.y = b.rotationY || 0;
         plan.rotation.z = 0;
       }
+      applyFloorPlanPerLevelRotation(plan, floorDef);
     }
 
     /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на «подошву» корпуса. floorLevel — для общего охвата этажей. */
@@ -3339,7 +3374,7 @@
         }
       });
 
-      applyFloorPlanOrientation(plan, b);
+      applyFloorPlanOrientation(plan, b, floorDef);
       alignFloorPlanToBuilding(plan, b, bid, level);
 
       floorPlanRoot.add(plan);
