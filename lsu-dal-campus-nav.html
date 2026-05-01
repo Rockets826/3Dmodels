@@ -550,6 +550,7 @@
      *   floors: [{ level: 1, modelPath: '…' }], // опционально, если ENABLE_FLOOR_PLANS_UI
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
+     *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
      *   floorPlanMatchBuildingFootprint: true, // подогнать масштаб и центр под bbox корпуса (для LOD по умолчанию true; false — только FLOOR_PLAN_SCALE + центр)
      *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
@@ -639,6 +640,10 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '4k',
+        // Для 4к центр bbox даёт смещение gizmo; используем центроид геометрии по XZ.
+        embeddedPivotMethod: 'centroid',
+        // Ручной сдвиг pivot/gizmo в мире (м): поджать к телу корпуса по синей оси.
+        embeddedPivotNudge: { x: 0, z: -6 },
         modelScale: 1,
         disabled: false,
         rooms: [
@@ -654,6 +659,16 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '5k',
+        floorPlanLod: true,
+        /** План в XZ, как у 1к; yaw подтягивается к узлу «5k», без копирования полного quaternion (наклон оболочки). */
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/5k/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/5k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/5k/3f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
@@ -1030,6 +1045,10 @@
     }
 
     const _tmpBox3 = new THREE.Box3();
+    const _floorShellWorldQ = new THREE.Quaternion();
+    const _floorOrientEuler = new THREE.Euler(0, 0, 0);
+    const _floorPlanSizingBox = new THREE.Box3();
+    const _floorPlanFullBox = new THREE.Box3();
 
     /** Запасной AABB по геометрии мешей (если setFromObject дал пустой бокс — модель «пропадает»). */
     function expandWorldBoxFromMeshes(root, box) {
@@ -1290,14 +1309,42 @@
         box.setFromObject(root, true);
       }
       if (box.isEmpty()) return;
-      const cx = (box.min.x + box.max.x) * 0.5;
-      const cz = (box.min.z + box.max.z) * 0.5;
-      const ymin = box.min.y;
+
+      let cx = (box.min.x + box.max.x) * 0.5;
+      let cz = (box.min.z + box.max.z) * 0.5;
+      if (building?.embeddedPivotMethod === 'centroid') {
+        let sx = 0;
+        let sz = 0;
+        let sw = 0;
+        const mb = new THREE.Box3();
+        root.traverse((o) => {
+          if (!o.isMesh || !o.geometry || o.visible === false) return;
+          if (o.userData && o.userData.skipCampusBounding) return;
+          const g = o.geometry;
+          if (g.boundingBox == null) g.computeBoundingBox();
+          if (!g.boundingBox || g.boundingBox.isEmpty()) return;
+          mb.copy(g.boundingBox).applyMatrix4(o.matrixWorld);
+          if (mb.isEmpty()) return;
+          const c = mb.getCenter(new THREE.Vector3());
+          const s = mb.getSize(new THREE.Vector3());
+          const w = Math.max(1e-4, s.x * s.z); // вклад по «пятну» на XZ
+          sx += c.x * w;
+          sz += c.z * w;
+          sw += w;
+        });
+        if (sw > 0) {
+          cx = sx / sw;
+          cz = sz / sw;
+        }
+      }
+      const yAnchor = box.min.y;
       const cur = new THREE.Vector3();
       root.getWorldPosition(cur);
-      const dx = cx - cur.x;
-      const dy = ymin - cur.y;
-      const dz = cz - cur.z;
+      const nx = Number(building?.embeddedPivotNudge?.x) || 0;
+      const nz = Number(building?.embeddedPivotNudge?.z) || 0;
+      const dx = cx + nx - cur.x;
+      const dy = yAnchor - cur.y;
+      const dz = cz + nz - cur.z;
       if (Math.abs(dx) < 1e-5 && Math.abs(dy) < 1e-5 && Math.abs(dz) < 1e-5) return;
       root.position.x += dx;
       root.position.y += dy;
@@ -2974,8 +3021,52 @@
       return document.getElementById('toggle-floor-plan').checked;
     }
 
+    /** Bbox только по Mesh (расширяемый union), иначе весь объект — чтобы линии/разметка в GLB не раздували расчёт масштаба по XZ. */
+    function floorPlanSizingWorldBox(plan, outBox) {
+      if (expandWorldBoxFromMeshes(plan, outBox) && !outBox.isEmpty()) return outBox;
+      outBox.setFromObject(plan);
+      return outBox;
+    }
+
+    /**
+     * Для корпуса из макета: совмещаем только рыскание (yaw) с узлом тела по имени «5к» и т.п.; план остаётся в плоскости XZ, как без «наклона оболочки».
+     * Полный world-quaternion узла задаёт также наклон фасада в Blender — если скопировать целиком, GLB этажа (лист по XZ) «встаёт столбом» по оси высоты.
+     */
+    function tryApplyDistrictShellFloorOrientation(plan, root, b) {
+      const spec = b.floorPlanSynchronizeDistrictShellQuaternion;
+      if (!spec) return false;
+      const name =
+        typeof spec === 'string' && spec.trim().length > 0
+          ? spec.trim()
+          : String(b.embedInDistrictPrefix || '').trim();
+      if (!name || typeof root.getObjectByName !== 'function') return false;
+      const shell = root.getObjectByName(name);
+      if (!shell) return false;
+      shell.updateMatrixWorld(true);
+      _floorOrientEuler.setFromQuaternion(
+        shell.getWorldQuaternion(_floorShellWorldQ),
+        'YXZ'
+      );
+      const yaw = _floorOrientEuler.y;
+      const fr = b.floorPlanRotation;
+      if (fr && typeof fr === 'object') {
+        plan.rotation.x = fr.x != null ? fr.x : 0;
+        plan.rotation.z = fr.z != null ? fr.z : 0;
+        plan.rotation.y = yaw + (fr.y != null ? fr.y : 0);
+      } else {
+        plan.rotation.x = -Math.PI / 2;
+        plan.rotation.y = yaw;
+        plan.rotation.z = 0;
+      }
+      plan.updateMatrixWorld(true);
+      return true;
+    }
+
     /** Ориентация GLB этажа: по умолчанию как старые «лист в XY»; явный floorPlanRotation — план уже в glTF-осях (часто XZ). */
     function applyFloorPlanOrientation(plan, b) {
+      const root = buildingMeshes.get(b.id);
+      if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) return;
+
       const fr = b.floorPlanRotation;
       if (fr && typeof fr === 'object') {
         plan.rotation.x = fr.x != null ? fr.x : 0;
@@ -3025,21 +3116,21 @@
         return;
       }
 
-      let boxP = new THREE.Box3().setFromObject(plan);
-      let psz = boxP.getSize(new THREE.Vector3());
+      floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
+      let psz = _floorPlanSizingBox.getSize(new THREE.Vector3());
       const px = Math.max(psz.x, 1e-6);
       const pz = Math.max(psz.z, 1e-6);
       const k = Math.min(bsz.x / px, bsz.z / pz) * pad * userS;
       plan.scale.setScalar(k);
       plan.updateMatrixWorld(true);
-      boxP = new THREE.Box3().setFromObject(plan);
+      floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
 
       const cB = boxB.getCenter(new THREE.Vector3());
-      const cP = boxP.getCenter(new THREE.Vector3());
+      const cP = _floorPlanSizingBox.getCenter(new THREE.Vector3());
       plan.position.set(cB.x - cP.x, 0, cB.z - cP.z);
       plan.updateMatrixWorld(true);
-      boxP = new THREE.Box3().setFromObject(plan);
-      plan.position.y += ySurf - boxP.min.y;
+      _floorPlanFullBox.setFromObject(plan);
+      plan.position.y += ySurf - _floorPlanFullBox.min.y;
     }
 
     async function updateFloorPlan() {
