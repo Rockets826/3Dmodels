@@ -761,6 +761,21 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '8k',
+        floorPlanLod: true,
+        /** Доп. yaw к рысканию «8k» (−π/2 + ещё −π/2 = −π от «чистого» shell-yaw). */
+        floorPlanRotation: { x: 0, y: -Math.PI, z: 0 },
+        floorPlanShellYawFromMatrix: true,
+        floorPlanAlignEmbeddedPivotXZ: true,
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        /** После 2.12 схема была больше корпуса — вернули только подгонку по bbox (×1). */
+        floorPlanFootprintScaleMultiplier: 1,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/8k/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/8k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/8k/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/8k/4f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
