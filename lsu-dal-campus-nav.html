@@ -547,13 +547,14 @@
      *   modelPath: '3D/file.glb', // или '' + embedInDistrictPrefix: '5k'
      *   modelScale: 1,
      *   disabled: false,
-     *   floors: [{ level: 1, modelPath: '…' }], // опционально, если ENABLE_FLOOR_PLANS_UI
+     *   floors: [{ level: 1, modelPath: '…' }, …], // у элемента опционально floorPlanRotationY: Math.PI/2 (радианы), только этот этаж.
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
      *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
      *   floorPlanShellYawFromMatrix: true, // только при sync: yaw из XZ-базиса matrixWorld узла (4к с наклоном/масштабом); без флага — yaw из world-quaternion (1к–3к, 5к не трогать).
      *   floorPlanAlignEmbeddedPivotXZ: true, // только embed + centroid pivot: центр схемы по XZ = позиции корня корпуса (а не центр AABB иначе «Г» расходится).
      *   floorPlanWorldNudge: { x: 0, z: 2 }, // м, сдвиг схемы в мире после автопривязки (только этот корпус).
+     *   floorPlanFootprintScaleMultiplier: 1.08, // опционально: домножить k подгонки схемы к bbox (только этот корпус).
      *   floorPlanMatchBuildingFootprint: true, // подогнать масштаб и центр под bbox корпуса (для LOD по умолчанию true; false — только FLOOR_PLAN_SCALE + центр)
      *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
@@ -728,7 +729,23 @@
         position: { x: 0, z: 0 },
         rotationY: 0,
         modelPath: '',
-        embedInDistrictPrefix: '7kw',
+        /** Тело «7k»; префикс ^7k(\.|$|w) — 7k, 7kw, 7kw.001… Прежний только «7kw» не находил узел 7k. */
+        embedInDistrictPrefix: '7k',
+        floorPlanLod: true,
+        /** Доп. поворот всех схем к корпусу (к yaw «7k»); при неверной стороне смените на −π/2. */
+        floorPlanRotation: { x: 0, y: Math.PI / 2, z: 0 },
+        /** На макете у «7k» неuniform scale (~38×99); quaternion→Euler давал кособок план для всех этажей. */
+        floorPlanShellYawFromMatrix: true,
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        /** Поджать визуальный размер схем к пятну здания (подбери 1.0…1.2). */
+        floorPlanFootprintScaleMultiplier: 1.1,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          /** 1f.glb экспортирован иначе, чем 2f/3f: суммарно с общим π/2 даст их же ориентацию. */
+          { level: 1, modelPath: 'systemaetajey/7k/1f.glb', floorPlanRotationY: -Math.PI / 2 },
+          { level: 2, modelPath: 'systemaetajey/7k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/7k/3f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
@@ -1399,6 +1416,7 @@
 
     /**
      * Вырезает из загруженного макета все узлы, чьи имена подходят под правило корпуса, и группирует под pivot в сцене.
+     * Если в glTF узел «7kw» внутри «7k», второй attach() отрывает детей — берём только корни среди попаданий (см. roots).
      * @returns {THREE.Group|null}
      */
     function extractEmbeddedBuildingFromDistrict(b) {
@@ -1410,7 +1428,16 @@
         hits.push(o);
       });
       hits.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      if (!hits.length) {
+      const hitSet = new Set(hits);
+      const roots = hits.filter((node) => {
+        let p = node.parent;
+        while (p && p !== districtMapObject) {
+          if (hitSet.has(p)) return false;
+          p = p.parent;
+        }
+        return true;
+      });
+      if (!roots.length) {
         console.warn(
           `[LSU Nav] В макете не найдены узлы для «${b.name}» (${b.id}). Проверьте embedInDistrict* в MANUAL_BUILDINGS.`
         );
@@ -1419,8 +1446,8 @@
       const pivot = new THREE.Group();
       pivot.userData.buildingId = b.id;
       pivot.userData.embeddedFromDistrict = true;
-      for (let i = 0; i < hits.length; i++) {
-        pivot.attach(hits[i]);
+      for (let i = 0; i < roots.length; i++) {
+        pivot.attach(roots[i]);
       }
       pivot.traverse((o) => {
         restoreInteractiveRaycast(o);
@@ -2123,6 +2150,7 @@
       return { x: 0, z: 0 };
     }
 
+    /** Одна «подошва» для схем этажей по низу корпуса (без набора по высоте — GLB уже план каждого уровня). */
     function getBuildingWorldFloorPlanSurfaceY(bid) {
       const off = Number(MODEL_CONFIG.FLOOR_PLAN_SURFACE_OFFSET) || 0.15;
       const box = getBuildingRootWorldBox(bid);
@@ -2259,9 +2287,12 @@
       const bx = xz.x;
       const bz = xz.z;
       const yOff = getBuildingWorldFloorPlanSurfaceY(building.id);
-      const fh = MODEL_CONFIG.FLOOR_HEIGHT_METERS;
+      const fh = Number(MODEL_CONFIG.FLOOR_HEIGHT_METERS) || 3.5;
+      const fl = Number(floorLevel);
+      const step =
+        Number.isFinite(fl) && fl >= 1 ? Math.max(0, fl - 1) * fh : 0;
+      const y = yOff + 0.2 + step;
       const s = MODEL_CONFIG.FLOOR_PLAN_SCALE;
-      const y = yOff + 0.2 + (floorLevel - 1) * fh;
       return new THREE.Vector3(bx + local.x * s, y, bz + local.z * s);
     }
 
@@ -2518,9 +2549,11 @@
     }
 
     function roomWorldYForFloor(building, floorLevel) {
-      const yOff = getBuildingWorldFloorPlanSurfaceY(building.id);
-      const fh = MODEL_CONFIG.FLOOR_HEIGHT_METERS;
-      return yOff + 0.2 + (floorLevel - 1) * fh;
+      const fh = Number(MODEL_CONFIG.FLOOR_HEIGHT_METERS) || 3.5;
+      const fl = Number(floorLevel);
+      const step =
+        Number.isFinite(fl) && fl >= 1 ? Math.max(0, fl - 1) * fh : 0;
+      return getBuildingWorldFloorPlanSurfaceY(building.id) + 0.2 + step;
     }
 
     function refreshRoomMarkupUi() {
@@ -3107,10 +3140,21 @@
       return true;
     }
 
-    /** Ориентация GLB этажа: по умолчанию как старые «лист в XY»; явный floorPlanRotation — план уже в glTF-осях (часто XZ). */
-    function applyFloorPlanOrientation(plan, b) {
+    function applyFloorPlanPerLevelYaw(plan, floorDef) {
+      if (!floorDef || typeof floorDef !== 'object') return;
+      const dy = Number(floorDef.floorPlanRotationY);
+      if (!Number.isFinite(dy) || dy === 0) return;
+      plan.rotation.y += dy;
+      plan.updateMatrixWorld(true);
+    }
+
+    /** Ориентация GLB этажа; floorDef — элемент floors[] с опциональным floorPlanRotationY. */
+    function applyFloorPlanOrientation(plan, b, floorDef) {
       const root = buildingMeshes.get(b.id);
-      if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) return;
+      if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) {
+        applyFloorPlanPerLevelYaw(plan, floorDef);
+        return;
+      }
 
       const fr = b.floorPlanRotation;
       if (fr && typeof fr === 'object') {
@@ -3122,14 +3166,18 @@
         plan.rotation.y = b.rotationY || 0;
         plan.rotation.z = 0;
       }
+      applyFloorPlanPerLevelYaw(plan, floorDef);
     }
 
-    /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на «подошву» корпуса. */
+    /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на общую «подошву» корпуса. */
     function alignFloorPlanToBuilding(plan, b, bid) {
       const root = buildingMeshes.get(bid);
       const ySurf = getBuildingWorldFloorPlanSurfaceY(bid);
       const userS = Number(MODEL_CONFIG.FLOOR_PLAN_SCALE) || 1;
       const pad = Number(MODEL_CONFIG.FLOOR_PLAN_FOOTPRINT_PAD) || 0.99;
+      const sk = Number(b.floorPlanFootprintScaleMultiplier);
+      const footprintMult =
+        Number.isFinite(sk) && sk > 0 ? sk : 1;
 
       const match =
         b.floorPlanMatchBuildingFootprint === true ||
@@ -3165,7 +3213,8 @@
       let psz = _floorPlanSizingBox.getSize(new THREE.Vector3());
       const px = Math.max(psz.x, 1e-6);
       const pz = Math.max(psz.z, 1e-6);
-      const k = Math.min(bsz.x / px, bsz.z / pz) * pad * userS;
+      const k =
+        Math.min(bsz.x / px, bsz.z / pz) * pad * userS * footprintMult;
       plan.scale.setScalar(k);
       plan.updateMatrixWorld(true);
       floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
@@ -3264,7 +3313,7 @@
         }
       });
 
-      applyFloorPlanOrientation(plan, b);
+      applyFloorPlanOrientation(plan, b, floorDef);
       alignFloorPlanToBuilding(plan, b, bid);
 
       floorPlanRoot.add(plan);
