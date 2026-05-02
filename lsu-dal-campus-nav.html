@@ -821,6 +821,21 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '11k',
+        floorPlanLod: true,
+        /** Как у 9к после подгонки; при зеркале — поменять знак или шаг ±π/2. */
+        floorPlanRotation: { x: 0, y: (-3 * Math.PI) / 2, z: 0 },
+        floorPlanShellYawFromMatrix: true,
+        floorPlanAlignEmbeddedPivotXZ: true,
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        /** 1.04 × 1.05 (+5 %). */
+        floorPlanFootprintScaleMultiplier: 1.092,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/11k/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/11k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/11k/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/11k/4f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
