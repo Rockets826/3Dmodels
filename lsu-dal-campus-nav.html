@@ -547,7 +547,7 @@
      *   modelPath: '3D/file.glb', // или '' + embedInDistrictPrefix: '5k'
      *   modelScale: 1,
      *   disabled: false,
-     *   floors: [{ level: 1, modelPath: '…' }, …], // у элемента опционально floorPlanRotationY: Math.PI/2 (радианы), только этот этаж.
+     *   floors: [{ level: 1, modelPath: '…' }, …], // опционально у элемента: floorPlanRotationY (рад.), floorPlanLevelNudge: { x, z } в м сцены после привязки — только этот этаж.
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
      *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
@@ -844,7 +844,7 @@
         ],
         entranceWorld: { x: 0, y: 1, z: 0 }
       },
-      // 12-й корпус на макете — узлы 12k / 12kw… Отдельный экспорт той же геометрии: 3D/korpus-1a.glb (ранее korpus-12.glb).
+      // 12-й корпус на макете — узлы 12k / 12kw… Пристройка: bbox «12k» может не совпасть с пятном схемы — крутить floorPlanRotation / floorPlanFootprintScaleMultiplier / floorPlanWorldNudge (см. 4к).
       {
         id: 'korpus-12',
         name: 'Корпус 12',
@@ -852,6 +852,25 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '12k',
+        floorPlanLod: true,
+        floorPlanRotation: { x: 0, y: 0, z: 0 },
+        floorPlanShellYawFromMatrix: true,
+        floorPlanAlignEmbeddedPivotXZ: true,
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        floorPlanFootprintScaleMultiplier: 1,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/12k/1f.glb' },
+          /** 2f: разворот + сдвиг по XZ (м сцены), чтобы длинный коридор совпал с 3 этажом; подберите x/z. */
+          {
+            level: 2,
+            modelPath: 'systemaetajey/12k/2f.glb',
+            floorPlanRotationY: Math.PI,
+            floorPlanLevelNudge: { x: 4, z: 0 }
+          },
+          { level: 3, modelPath: 'systemaetajey/12k/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/12k/4f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
@@ -3193,7 +3212,7 @@
       plan.updateMatrixWorld(true);
     }
 
-    /** Ориентация GLB этажа; floorDef — элемент floors[] с опциональным floorPlanRotationY. */
+    /** Ориентация GLB этажа; floorDef — floors[]: опционально floorPlanRotationY. */
     function applyFloorPlanOrientation(plan, b, floorDef) {
       const root = buildingMeshes.get(b.id);
       if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) {
@@ -3360,6 +3379,12 @@
 
       applyFloorPlanOrientation(plan, b, floorDef);
       alignFloorPlanToBuilding(plan, b, bid);
+      const lvNudge = floorDef.floorPlanLevelNudge;
+      if (lvNudge && typeof lvNudge === 'object') {
+        plan.position.x += Number(lvNudge.x) || 0;
+        plan.position.z += Number(lvNudge.z) || 0;
+        plan.updateMatrixWorld(true);
+      }
 
       floorPlanRoot.add(plan);
       if (floorPlanRoot.children.indexOf(floorRouteGroup) >= 0) {
