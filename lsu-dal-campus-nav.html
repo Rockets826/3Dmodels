@@ -551,6 +551,9 @@
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
      *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
+     *   floorPlanShellYawFromMatrix: true, // только при sync: yaw из XZ-базиса matrixWorld узла (4к с наклоном/масштабом); без флага — yaw из world-quaternion (1к–3к, 5к не трогать).
+     *   floorPlanAlignEmbeddedPivotXZ: true, // только embed + centroid pivot: центр схемы по XZ = позиции корня корпуса (а не центр AABB иначе «Г» расходится).
+     *   floorPlanWorldNudge: { x: 0, z: 2 }, // м, сдвиг схемы в мире после автопривязки (только этот корпус).
      *   floorPlanMatchBuildingFootprint: true, // подогнать масштаб и центр под bbox корпуса (для LOD по умолчанию true; false — только FLOOR_PLAN_SCALE + центр)
      *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
@@ -646,8 +649,14 @@
         embeddedPivotNudge: { x: 0, z: -6 },
         floorPlanLod: true,
         floorPlanRotation: { x: 0, y: 0, z: 0 },
-        /** Узел «4k» в макете с сильным масштабом/наклоном тела; yaw подтягивается к телу как у корпуса 5 (план остаётся по XZ). */
+        /** Узел «4k»: yaw из matrixWorld по XZ (не из quaternion), иначе с Euler «плывут» схемы; у остальных корпусов флаг не задан. */
+        floorPlanShellYawFromMatrix: true,
+        /** Схемы по XZ к pivot/embed ( centroid ), не к центру AABB — иначе этажи «рядом» с телом. */
+        floorPlanAlignEmbeddedPivotXZ: true,
+        /** У узла «4k» на макете сильный масштаб/наклон; план в XZ. */
         floorPlanSynchronizeDistrictShellQuaternion: true,
+        /** М, сдвиг схем от pivot (тонкая подгонка под дороги/соседей). */
+        floorPlanWorldNudge: { x: 0, z: 2.5 },
         floorPlanMatchBuildingFootprint: true,
         floors: [
           { level: 1, modelPath: 'systemaetajey/4k/1f.glb' },
@@ -2087,6 +2096,13 @@
 
     function getBuildingHorizCenterXZ(bid) {
       const b = buildingDataById.get(bid);
+      const root = buildingMeshes.get(bid);
+      if (
+        b?.floorPlanAlignEmbeddedPivotXZ === true &&
+        root?.userData?.embeddedFromDistrict
+      ) {
+        return { x: root.position.x, z: root.position.z };
+      }
       const box = getBuildingRootWorldBox(bid);
       if (box) {
         const c = box.getCenter(new THREE.Vector3());
@@ -3055,11 +3071,19 @@
       const shell = root.getObjectByName(name);
       if (!shell) return false;
       shell.updateMatrixWorld(true);
-      _floorOrientEuler.setFromQuaternion(
-        shell.getWorldQuaternion(_floorShellWorldQ),
-        'YXZ'
-      );
-      const yaw = _floorOrientEuler.y;
+      let yaw;
+      if (b.floorPlanShellYawFromMatrix === true) {
+        const e = shell.matrixWorld.elements;
+        const xLen = Math.hypot(e[0], e[2]);
+        const zLen = Math.hypot(e[8], e[10]);
+        yaw = xLen >= zLen ? Math.atan2(e[2], e[0]) : Math.atan2(e[10], e[8]);
+      } else {
+        _floorOrientEuler.setFromQuaternion(
+          shell.getWorldQuaternion(_floorShellWorldQ),
+          'YXZ'
+        );
+        yaw = _floorOrientEuler.y;
+      }
       const fr = b.floorPlanRotation;
       if (fr && typeof fr === 'object') {
         plan.rotation.x = fr.x != null ? fr.x : 0;
@@ -3139,7 +3163,23 @@
 
       const cB = boxB.getCenter(new THREE.Vector3());
       const cP = _floorPlanSizingBox.getCenter(new THREE.Vector3());
-      plan.position.set(cB.x - cP.x, 0, cB.z - cP.z);
+      let anchX = cB.x;
+      let anchZ = cB.z;
+      if (
+        b.floorPlanAlignEmbeddedPivotXZ === true &&
+        root.userData?.embeddedFromDistrict
+      ) {
+        anchX = root.position.x;
+        anchZ = root.position.z;
+      }
+      let cx = anchX - cP.x;
+      let cz = anchZ - cP.z;
+      const wn = b.floorPlanWorldNudge;
+      if (wn && typeof wn === 'object') {
+        cx += Number(wn.x) || 0;
+        cz += Number(wn.z) || 0;
+      }
+      plan.position.set(cx, 0, cz);
       plan.updateMatrixWorld(true);
       _floorPlanFullBox.setFromObject(plan);
       plan.position.y += ySurf - _floorPlanFullBox.min.y;
