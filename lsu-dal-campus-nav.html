@@ -791,6 +791,21 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '9k',
+        floorPlanLod: true,
+        /** −π как у 8к + ещё −π/2; при промахе смените на ±π/2 вокруг текущего. */
+        floorPlanRotation: { x: 0, y: (-3 * Math.PI) / 2, z: 0 },
+        floorPlanShellYawFromMatrix: true,
+        floorPlanAlignEmbeddedPivotXZ: true,
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        /** Ещё +15 % к множителю 0.85 (×1.15 → ≈0,98). */
+        floorPlanFootprintScaleMultiplier: 0.98,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/9k/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/9k/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/9k/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/9k/4f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
