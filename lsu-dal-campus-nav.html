@@ -695,8 +695,13 @@
         floorPlanSynchronizeDistrictShellQuaternion: true,
         floorPlanMatchBuildingFootprint: true,
         floors: [
-          /** 1f, 2f экспортированы зеркально к 3f — разворот на 180° (per-level). */
-          { level: 1, modelPath: 'systemaetajey/5k/1f.glb', floorPlanRotationY: Math.PI },
+          /** 1f, 2f экспортированы зеркально к 3f — разворот на 180° (per-level). 1f дополнительно FrontSide → DoubleSide точечно. */
+          {
+            level: 1,
+            modelPath: 'systemaetajey/5k/1f.glb',
+            floorPlanRotationY: Math.PI,
+            floorPlanLevelDoubleSide: true
+          },
           { level: 2, modelPath: 'systemaetajey/5k/2f.glb', floorPlanRotationY: Math.PI },
           { level: 3, modelPath: 'systemaetajey/5k/3f.glb' }
         ],
@@ -872,6 +877,8 @@
         floorPlanSynchronizeDistrictShellQuaternion: true,
         floorPlanFootprintScaleMultiplier: 1,
         floorPlanMatchBuildingFootprint: true,
+        /** Все этажи экспортированы FrontSide (часть стен пропадает) → DoubleSide на корпус. */
+        floorPlanDoubleSide: true,
         floors: [
           { level: 1, modelPath: 'systemaetajey/12k/1f.glb' },
           /** 2f экспортирован зеркально по одной оси; чуть подвинут вправо в мире для совпадения с 1/3/4. */
@@ -908,6 +915,8 @@
         floorPlanSynchronizeDistrictShellQuaternion: true,
         floorPlanFootprintScaleMultiplier: 1,
         floorPlanMatchBuildingFootprint: true,
+        /** Все 7 этажей экспортированы FrontSide (стены пропадают «с одной стороны») → DoubleSide на корпус. */
+        floorPlanDoubleSide: true,
         floors: [
           { level: 1, modelPath: 'systemaetajey/siniy-1a/1f.glb' },
           { level: 2, modelPath: 'systemaetajey/siniy-1a/2f.glb' },
