@@ -547,7 +547,7 @@
      *   modelPath: '3D/file.glb', // или '' + embedInDistrictPrefix: '5k'
      *   modelScale: 1,
      *   disabled: false,
-     *   floors: [{ level: 1, modelPath: '…' }, …], // опц. у элемента: floorPlanRotationY (рад.), floorPlanLevelNudge: { x, z } м сцены, floorPlanLevelMirror: 'x' | 'z' — только этот этаж.
+     *   floors: [{ level: 1, modelPath: '…' }, …], // опц. у элемента: floorPlanRotationY (рад.), floorPlanLevelNudge: { x, z } м, floorPlanLevelMirror: 'x' | 'z', floorPlanLevelScale: 0.85 — только этот этаж.
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
      *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
@@ -604,9 +604,10 @@
         floorPlanMatchBuildingFootprint: true,
         floors: [
           { level: 1, modelPath: 'systemaetajey/2k/1fl.glb' },
-          { level: 2, modelPath: 'systemaetajey/2k/2fl.glb' },
-          { level: 3, modelPath: 'systemaetajey/2k/3fl.glb' },
-          { level: 4, modelPath: 'systemaetajey/2k/4fl.glb' }
+          /** 2/3/4 этажи в GLB крупнее 1-го — приводим к его масштабу через levelScale (~0.7; уменьшайте до 0.6, если всё ещё больше). */
+          { level: 2, modelPath: 'systemaetajey/2k/2fl.glb', floorPlanLevelScale: 0.7 },
+          { level: 3, modelPath: 'systemaetajey/2k/3fl.glb', floorPlanLevelScale: 0.7 },
+          { level: 4, modelPath: 'systemaetajey/2k/4fl.glb', floorPlanLevelScale: 0.7 }
         ],
         rooms: [
           { id: 'k02-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
@@ -3234,7 +3235,7 @@
     }
 
     /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на общую «подошву» корпуса. */
-    function alignFloorPlanToBuilding(plan, b, bid) {
+    function alignFloorPlanToBuilding(plan, b, bid, floorDef) {
       const root = buildingMeshes.get(bid);
       const ySurf = getBuildingWorldFloorPlanSurfaceY(bid);
       const userS = Number(MODEL_CONFIG.FLOOR_PLAN_SCALE) || 1;
@@ -3242,6 +3243,8 @@
       const sk = Number(b.floorPlanFootprintScaleMultiplier);
       const footprintMult =
         Number.isFinite(sk) && sk > 0 ? sk : 1;
+      const lk = Number(floorDef?.floorPlanLevelScale);
+      const levelMult = Number.isFinite(lk) && lk > 0 ? lk : 1;
 
       const match =
         b.floorPlanMatchBuildingFootprint === true ||
@@ -3278,7 +3281,7 @@
       const px = Math.max(psz.x, 1e-6);
       const pz = Math.max(psz.z, 1e-6);
       const k =
-        Math.min(bsz.x / px, bsz.z / pz) * pad * userS * footprintMult;
+        Math.min(bsz.x / px, bsz.z / pz) * pad * userS * footprintMult * levelMult;
       plan.scale.setScalar(k);
       plan.updateMatrixWorld(true);
       floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
@@ -3387,7 +3390,7 @@
       }
 
       applyFloorPlanOrientation(plan, b, floorDef);
-      alignFloorPlanToBuilding(plan, b, bid);
+      alignFloorPlanToBuilding(plan, b, bid, floorDef);
       const lvNudge = floorDef.floorPlanLevelNudge;
       if (lvNudge && typeof lvNudge === 'object') {
         plan.position.x += Number(lvNudge.x) || 0;
