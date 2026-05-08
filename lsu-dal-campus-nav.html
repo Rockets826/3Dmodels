@@ -888,6 +888,23 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: 'sk',
+        floorPlanLod: true,
+        /** План развёрнут «в другую сторону» — добавляем yaw π. Если будет всё ещё не туда, попробуйте ±π/2. */
+        floorPlanRotation: { x: Math.PI, y: Math.PI, z: 0 },
+        floorPlanShellYawFromMatrix: true,
+        floorPlanAlignEmbeddedPivotXZ: true,
+        floorPlanSynchronizeDistrictShellQuaternion: true,
+        floorPlanFootprintScaleMultiplier: 1,
+        floorPlanMatchBuildingFootprint: true,
+        floors: [
+          { level: 1, modelPath: 'systemaetajey/siniy-1a/1f.glb' },
+          { level: 2, modelPath: 'systemaetajey/siniy-1a/2f.glb' },
+          { level: 3, modelPath: 'systemaetajey/siniy-1a/3f.glb' },
+          { level: 4, modelPath: 'systemaetajey/siniy-1a/4f.glb' },
+          { level: 5, modelPath: 'systemaetajey/siniy-1a/5f.glb' },
+          { level: 6, modelPath: 'systemaetajey/siniy-1a/6f.glb' },
+          { level: 7, modelPath: 'systemaetajey/siniy-1a/7f.glb' }
+        ],
         modelScale: 1,
         disabled: false,
         rooms: [
