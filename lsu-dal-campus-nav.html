@@ -547,7 +547,7 @@
      *   modelPath: '3D/file.glb', // или '' + embedInDistrictPrefix: '5k'
      *   modelScale: 1,
      *   disabled: false,
-     *   floors: [{ level: 1, modelPath: '…' }, …], // опц. у элемента: floorPlanRotationY (рад.), floorPlanLevelNudge: { x, z } м, floorPlanLevelMirror: 'x' | 'z', floorPlanLevelScale: 0.85 — только этот этаж.
+     *   floors: [{ level: 1, modelPath: '…' }, …], // опц. у элемента: floorPlanRotationY (рад.), floorPlanLevelNudge {x,z} м, floorPlanLevelMirror 'x'|'z', floorPlanLevelScale 0.85 (равномерный), floorPlanLevelXzScale 1.1 (толщина/ширина без подъёма стен), floorPlanLevelWallHeightScale 2 (только высота).
      *   floorPlanLod: true, // вместе с floors: при приближении камеры скрывается фасад и показывается GLB этажа
      *   floorPlanRotation: { x: 0, y: 0, z: 0 }, // опционально; без поля — x=-π/2 (план в плоскости XY → кладём на землю XZ). glTF с планом в XZ: { x: 0 }
      *   floorPlanSynchronizeDistrictShellQuaternion: true | '5k', // для embed: «рысканье» (yaw) плана совпадает с узлом тела по имени; план горизонтальный в XZ как у 1к (полный quaternion оболочки не копировать — будет вертикальный «лист»).
@@ -556,6 +556,7 @@
      *   floorPlanWorldNudge: { x: 0, z: 2 }, // м, сдвиг схемы в мире после автопривязки (только этот корпус).
      *   floorPlanFootprintScaleMultiplier: 1.08, // опционально: домножить k подгонки схемы к bbox (только этот корпус).
      *   floorPlanMatchBuildingFootprint: true, // подогнать масштаб и центр под bbox корпуса (для LOD по умолчанию true; false — только FLOOR_PLAN_SCALE + центр)
+     *   floorPlanDoubleSide: true, // опц.: m.side=DoubleSide на всех мешах схем этого корпуса (если стены пропадают «с одной стороны»).
      *   labelWorld: { x: 0, y: 40, z: 0 }, // опционально — ручная позиция метки; иначе над центром bbox здания
      *   rooms: [
      *     { id: 'uniq-hall', label: 'Холл', floor: 1, local: { x: 0, z: 0 } },
@@ -645,6 +646,8 @@
         rotationY: 0,
         modelPath: '',
         embedInDistrictPrefix: '4k',
+        /** GLB этажей экспортированы FrontSide → стены пропадают «с одной стороны». */
+        floorPlanDoubleSide: true,
         // Для 4к центр bbox даёт смещение gizmo; используем центроид геометрии по XZ.
         embeddedPivotMethod: 'centroid',
         // Ручной сдвиг pivot/gizmo в мире (м): поджать к телу корпуса по синей оси.
@@ -3300,7 +3303,16 @@
       const pz = Math.max(psz.z, 1e-6);
       const k =
         Math.min(bsz.x / px, bsz.z / pz) * pad * userS * footprintMult * levelMult;
-      plan.scale.setScalar(k);
+      plan.scale.set(k, k, k);
+      const lxz = Number(floorDef?.floorPlanLevelXzScale);
+      if (Number.isFinite(lxz) && lxz > 0 && lxz !== 1) {
+        plan.scale.x = k * lxz;
+        plan.scale.z = k * lxz;
+      }
+      const lh = Number(floorDef?.floorPlanLevelWallHeightScale);
+      const bh = Number(b.floorPlanWallHeightScale);
+      const wh = Number.isFinite(lh) && lh > 0 ? lh : bh;
+      if (Number.isFinite(wh) && wh > 0 && wh !== 1) plan.scale.y = k * wh;
       plan.updateMatrixWorld(true);
       floorPlanSizingWorldBox(plan, _floorPlanSizingBox);
 
@@ -3391,11 +3403,19 @@
 
       const fpCast = MODEL_CONFIG.FLOOR_PLAN_CAST_SHADOW === true;
       const fpRecv = MODEL_CONFIG.FLOOR_PLAN_RECEIVE_SHADOW === true;
+      const ds = b.floorPlanDoubleSide === true;
       plan.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = fpCast;
-          o.receiveShadow = fpRecv;
-        }
+        if (!o.isMesh) return;
+        o.castShadow = fpCast;
+        o.receiveShadow = fpRecv;
+        if (!ds || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => {
+          if (!m || m.side === undefined) return;
+          m.side = THREE.DoubleSide;
+          if ('shadowSide' in m) m.shadowSide = THREE.DoubleSide;
+          m.needsUpdate = true;
+        });
       });
 
       const mirror = floorDef.floorPlanLevelMirror;
