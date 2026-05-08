@@ -688,8 +688,9 @@
         floorPlanSynchronizeDistrictShellQuaternion: true,
         floorPlanMatchBuildingFootprint: true,
         floors: [
-          { level: 1, modelPath: 'systemaetajey/5k/1f.glb' },
-          { level: 2, modelPath: 'systemaetajey/5k/2f.glb' },
+          /** 1f, 2f экспортированы зеркально к 3f — разворот на 180° (per-level). */
+          { level: 1, modelPath: 'systemaetajey/5k/1f.glb', floorPlanRotationY: Math.PI },
+          { level: 2, modelPath: 'systemaetajey/5k/2f.glb', floorPlanRotationY: Math.PI },
           { level: 3, modelPath: 'systemaetajey/5k/3f.glb' }
         ],
         modelScale: 1,
