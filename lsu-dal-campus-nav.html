@@ -470,7 +470,9 @@
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-export">Экспорт JSON</button>
             <button type="button" id="btn-room-import" class="ghost">Импорт JSON</button>
+            <button type="button" id="btn-room-clear-all" class="ghost" title="Удалить все точки этого корпуса">Очистить корпус</button>
           </div>
+          <p class="hint" style="margin:0;">Видны точки только текущего этажа (переключите этаж селектором выше). Камера в режиме разметки <strong>не вращается</strong> — выключите режим, чтобы покрутить.</p>
         </div>
       </div>
     </div>
@@ -2403,6 +2405,352 @@
       return building.rooms.find((r) => r.floor === floor && r.isStairs) || null;
     }
 
+    /* ======================== Indoor pathfinding (A* по растровой сетке стен) ========================
+     * Кэшируем NavGrid по ключу `${bid}@${level}`. Сетка считается в локальной системе
+     * currentFloorMesh, поэтому валидна, пока показывается тот же план этажа.
+     * Очищаем кэш в updateFloorPlan при смене плана.
+     * ----------------------------------------------------------------------------------------------- */
+    const navGridCache = new Map();
+
+    function navGridKey(bid, level) {
+      return `${bid}@${level}`;
+    }
+
+    function makeEmptyNavGrid(localBox, cellSize) {
+      const cols = Math.max(1, Math.ceil((localBox.max.x - localBox.min.x) / cellSize));
+      const rows = Math.max(1, Math.ceil((localBox.max.z - localBox.min.z) / cellSize));
+      return {
+        minX: localBox.min.x,
+        minZ: localBox.min.z,
+        cellSize,
+        cols,
+        rows,
+        cells: new Uint8Array(cols * rows)
+      };
+    }
+
+    function gridIdx(g, c, r) {
+      return r * g.cols + c;
+    }
+    function gridSetBlocked(g, c, r) {
+      if (c < 0 || r < 0 || c >= g.cols || r >= g.rows) return;
+      g.cells[gridIdx(g, c, r)] = 1;
+    }
+    function gridIsBlocked(g, c, r) {
+      if (c < 0 || r < 0 || c >= g.cols || r >= g.rows) return true;
+      return g.cells[gridIdx(g, c, r)] === 1;
+    }
+    function gridLocalToCell(g, lx, lz) {
+      return [
+        Math.floor((lx - g.minX) / g.cellSize),
+        Math.floor((lz - g.minZ) / g.cellSize)
+      ];
+    }
+    function gridCellToLocal(g, c, r) {
+      return {
+        x: g.minX + (c + 0.5) * g.cellSize,
+        z: g.minZ + (r + 0.5) * g.cellSize
+      };
+    }
+
+    /**
+     * Растеризовать план этажа в сетку проходимости.
+     * - bbox считается по вершинам всех мешей в локальной системе plan;
+     * - стенами считаются треугольники, чья центральная Y лежит в средних 80% высоты
+     *   (отрезает пол/потолок/крышу);
+     * - после растеризации стены расширяются на agentRadius (≈0.4 м), чтобы маршрут
+     *   проходил «по центру коридора», не цепляя углы.
+     */
+    function rasterizePlanToNavGrid(plan, agentRadiusMeters = 0.4) {
+      if (!plan) return null;
+      plan.updateMatrixWorld(true);
+      const planInv = new THREE.Matrix4().copy(plan.matrixWorld).invert();
+
+      const localBox = new THREE.Box3();
+      const v = new THREE.Vector3();
+      plan.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        o.updateMatrixWorld(true);
+        const m = new THREE.Matrix4().multiplyMatrices(planInv, o.matrixWorld);
+        const pos = o.geometry.attributes.position;
+        if (!pos) return;
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(m);
+          localBox.expandByPoint(v);
+        }
+      });
+      if (localBox.isEmpty()) return null;
+
+      const pad = Math.max(1, agentRadiusMeters * 2);
+      localBox.min.x -= pad;
+      localBox.min.z -= pad;
+      localBox.max.x += pad;
+      localBox.max.z += pad;
+
+      const sizeX = localBox.max.x - localBox.min.x;
+      const sizeZ = localBox.max.z - localBox.min.z;
+      const span = Math.max(sizeX, sizeZ);
+      const targetCellsPerSide = 240;
+      let cellSize = span / targetCellsPerSide;
+      cellSize = Math.max(0.15, Math.min(0.5, cellSize));
+
+      const grid = makeEmptyNavGrid(localBox, cellSize);
+      const yMin = localBox.min.y;
+      const yMax = localBox.max.y;
+      const yRange = yMax - yMin;
+      const yLow = yMin + yRange * 0.1;
+      const yHigh = yMin + yRange * 0.9;
+
+      const a = new THREE.Vector3();
+      const b2 = new THREE.Vector3();
+      const c2 = new THREE.Vector3();
+      let triBlocked = 0;
+
+      plan.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        const m = new THREE.Matrix4().multiplyMatrices(planInv, o.matrixWorld);
+        const pos = o.geometry.attributes.position;
+        if (!pos) return;
+        const idx = o.geometry.index;
+        const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3);
+        for (let t = 0; t < triCount; t++) {
+          const ia = idx ? idx.getX(t * 3) : t * 3;
+          const ib = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
+          const ic = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+          a.fromBufferAttribute(pos, ia).applyMatrix4(m);
+          b2.fromBufferAttribute(pos, ib).applyMatrix4(m);
+          c2.fromBufferAttribute(pos, ic).applyMatrix4(m);
+          const yMid = (a.y + b2.y + c2.y) / 3;
+          if (yMid < yLow || yMid > yHigh) continue;
+
+          const minCx = Math.floor((Math.min(a.x, b2.x, c2.x) - grid.minX) / cellSize);
+          const maxCx = Math.floor((Math.max(a.x, b2.x, c2.x) - grid.minX) / cellSize);
+          const minCz = Math.floor((Math.min(a.z, b2.z, c2.z) - grid.minZ) / cellSize);
+          const maxCz = Math.floor((Math.max(a.z, b2.z, c2.z) - grid.minZ) / cellSize);
+          for (let r = minCz; r <= maxCz; r++) {
+            for (let cc = minCx; cc <= maxCx; cc++) {
+              gridSetBlocked(grid, cc, r);
+              triBlocked++;
+            }
+          }
+        }
+      });
+
+      const inflate = Math.max(1, Math.round(agentRadiusMeters / cellSize));
+      const inflated = new Uint8Array(grid.cells.length);
+      for (let r = 0; r < grid.rows; r++) {
+        for (let cc = 0; cc < grid.cols; cc++) {
+          if (grid.cells[gridIdx(grid, cc, r)] !== 1) continue;
+          for (let dr = -inflate; dr <= inflate; dr++) {
+            for (let dc = -inflate; dc <= inflate; dc++) {
+              const nr = r + dr;
+              const nc = cc + dc;
+              if (nr < 0 || nc < 0 || nr >= grid.rows || nc >= grid.cols) continue;
+              inflated[gridIdx(grid, nc, nr)] = 1;
+            }
+          }
+        }
+      }
+      grid.cells = inflated;
+
+      console.log(
+        `[Nav] grid ${grid.cols}x${grid.rows} cell=${cellSize.toFixed(2)}m blockedTri=${triBlocked} inflate=${inflate}`
+      );
+      return grid;
+    }
+
+    function findNearestFreeCell(g, c0, r0, maxRadius = 60) {
+      if (!gridIsBlocked(g, c0, r0)) return [c0, r0];
+      const visited = new Uint8Array(g.cells.length);
+      visited[gridIdx(g, c0, r0)] = 1;
+      let frontier = [[c0, r0, 0]];
+      while (frontier.length) {
+        const next = [];
+        for (const [cc, rr, d] of frontier) {
+          if (d > maxRadius) return null;
+          for (const [dc, dr] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1]
+          ]) {
+            const nc = cc + dc;
+            const nr = rr + dr;
+            if (nc < 0 || nr < 0 || nc >= g.cols || nr >= g.rows) continue;
+            const ki = gridIdx(g, nc, nr);
+            if (visited[ki]) continue;
+            visited[ki] = 1;
+            if (!gridIsBlocked(g, nc, nr)) return [nc, nr];
+            next.push([nc, nr, d + 1]);
+          }
+        }
+        frontier = next;
+      }
+      return null;
+    }
+
+    function navHeuristic(c1, r1, c2, r2) {
+      const dx = Math.abs(c1 - c2);
+      const dy = Math.abs(r1 - r2);
+      const d = Math.min(dx, dy);
+      const s = Math.max(dx, dy);
+      return d * Math.SQRT2 + (s - d);
+    }
+
+    function lineOfSight(grid, c0, r0, c1, r1) {
+      let dx = Math.abs(c1 - c0);
+      let dy = Math.abs(r1 - r0);
+      const sx = c0 < c1 ? 1 : -1;
+      const sy = r0 < r1 ? 1 : -1;
+      let err = dx - dy;
+      let cc = c0;
+      let rr = r0;
+      let safety = grid.cols * grid.rows;
+      while (safety-- > 0) {
+        if (gridIsBlocked(grid, cc, rr)) return false;
+        if (cc === c1 && rr === r1) return true;
+        const e2 = 2 * err;
+        if (e2 > -dy) {
+          err -= dy;
+          cc += sx;
+        }
+        if (e2 < dx) {
+          err += dx;
+          rr += sy;
+        }
+      }
+      return false;
+    }
+
+    function smoothCellPath(grid, cells) {
+      if (cells.length <= 2) return cells;
+      const out = [cells[0]];
+      let i = 0;
+      let safety = cells.length + 5;
+      while (i < cells.length - 1 && safety-- > 0) {
+        let j = cells.length - 1;
+        while (
+          j > i + 1 &&
+          !lineOfSight(grid, cells[i][0], cells[i][1], cells[j][0], cells[j][1])
+        ) {
+          j--;
+        }
+        out.push(cells[j]);
+        i = j;
+      }
+      return out;
+    }
+
+    function findPathOnNavGrid(grid, start, end) {
+      if (!grid) return null;
+      let [sc, sr] = gridLocalToCell(grid, start.x, start.z);
+      let [ec, er] = gridLocalToCell(grid, end.x, end.z);
+      if (gridIsBlocked(grid, sc, sr)) {
+        const fix = findNearestFreeCell(grid, sc, sr, 60);
+        if (!fix) return null;
+        sc = fix[0];
+        sr = fix[1];
+      }
+      if (gridIsBlocked(grid, ec, er)) {
+        const fix = findNearestFreeCell(grid, ec, er, 60);
+        if (!fix) return null;
+        ec = fix[0];
+        er = fix[1];
+      }
+      const total = grid.cols * grid.rows;
+      const gScore = new Float32Array(total);
+      for (let i = 0; i < total; i++) gScore[i] = Infinity;
+      const cameFrom = new Int32Array(total);
+      cameFrom.fill(-1);
+      const closed = new Uint8Array(total);
+      const startIdx = gridIdx(grid, sc, sr);
+      const endIdx = gridIdx(grid, ec, er);
+      gScore[startIdx] = 0;
+      // Простая «очередь» через массив с поиском минимума: для сеток ≲300×300 ОК.
+      // При торможении перейти на бинарную кучу.
+      const open = [[navHeuristic(sc, sr, ec, er), startIdx]];
+      const dirs = [
+        [1, 0, 1],
+        [-1, 0, 1],
+        [0, 1, 1],
+        [0, -1, 1],
+        [1, 1, Math.SQRT2],
+        [1, -1, Math.SQRT2],
+        [-1, 1, Math.SQRT2],
+        [-1, -1, Math.SQRT2]
+      ];
+      let found = startIdx === endIdx;
+      let safety = total * 4;
+      while (open.length && safety-- > 0) {
+        let minI = 0;
+        for (let i = 1; i < open.length; i++) {
+          if (open[i][0] < open[minI][0]) minI = i;
+        }
+        const [, cidx] = open.splice(minI, 1)[0];
+        if (closed[cidx]) continue;
+        closed[cidx] = 1;
+        if (cidx === endIdx) {
+          found = true;
+          break;
+        }
+        const cR = Math.floor(cidx / grid.cols);
+        const cC = cidx - cR * grid.cols;
+        for (const [dc, dr, w] of dirs) {
+          const nc = cC + dc;
+          const nr = cR + dr;
+          if (nc < 0 || nr < 0 || nc >= grid.cols || nr >= grid.rows) continue;
+          if (gridIsBlocked(grid, nc, nr)) continue;
+          // Запрет «срезать угол» через диагональ, если соседняя ортогональная — стена.
+          if (Math.abs(dc) === 1 && Math.abs(dr) === 1) {
+            if (gridIsBlocked(grid, cC + dc, cR) || gridIsBlocked(grid, cC, cR + dr)) continue;
+          }
+          const nidx = gridIdx(grid, nc, nr);
+          if (closed[nidx]) continue;
+          const tentative = gScore[cidx] + w;
+          if (tentative < gScore[nidx]) {
+            gScore[nidx] = tentative;
+            cameFrom[nidx] = cidx;
+            open.push([tentative + navHeuristic(nc, nr, ec, er), nidx]);
+          }
+        }
+      }
+      if (!found) return null;
+
+      const cells = [];
+      let cur = endIdx;
+      let s2 = total;
+      while (cur !== -1 && s2-- > 0) {
+        const r = Math.floor(cur / grid.cols);
+        const c = cur - r * grid.cols;
+        cells.push([c, r]);
+        if (cur === startIdx) break;
+        cur = cameFrom[cur];
+      }
+      cells.reverse();
+
+      const smoothed = smoothCellPath(grid, cells);
+      const out = smoothed.map(([c, r]) => gridCellToLocal(grid, c, r));
+      out[0] = { x: start.x, z: start.z };
+      out[out.length - 1] = { x: end.x, z: end.z };
+      return out;
+    }
+
+    function getNavGridForCurrentFloor(bid, level) {
+      if (
+        !currentFloorMesh ||
+        currentFloorBuildingId !== bid ||
+        Number(currentFloorLevel) !== Number(level)
+      ) {
+        return null;
+      }
+      const key = navGridKey(bid, level);
+      let grid = navGridCache.get(key);
+      if (grid) return grid;
+      grid = rasterizePlanToNavGrid(currentFloorMesh, 0.4);
+      if (grid) navGridCache.set(key, grid);
+      return grid;
+    }
+
     function buildRoute() {
       clearRoute();
       const fromId = document.getElementById('route-from').value;
@@ -2424,11 +2772,21 @@
         const b = buildingDataById.get(from.buildingId);
         syncFloorRouteGroupPosition(b);
         if (from.floor === to.floor) {
-          addLine2DOnFloor([
-            { x: from.room.local.x, z: from.room.local.z },
-            { x: to.room.local.x, z: to.room.local.z }
-          ]);
-          hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: линия на схеме.`;
+          const grid = getNavGridForCurrentFloor(b.id, from.floor);
+          let path = null;
+          if (grid) path = findPathOnNavGrid(grid, from.room.local, to.room.local);
+          if (path && path.length > 1) {
+            addLine2DOnFloor(path);
+            hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: маршрут по коридорам (${path.length - 1} сегмент(ов)).`;
+          } else {
+            addLine2DOnFloor([
+              { x: from.room.local.x, z: from.room.local.z },
+              { x: to.room.local.x, z: to.room.local.z }
+            ]);
+            hint.textContent = grid
+              ? `Внутри «${b.name}», этаж ${from.floor}: путь не найден через стены — нарисована прямая. Подвиньте точки в коридор.`
+              : `Внутри «${b.name}», этаж ${from.floor}: откройте этаж в селекторе для маршрута по коридорам (сейчас прямая).`;
+          }
         } else {
           const sFrom = findStairsRoom(b, from.floor);
           const sTo = findStairsRoom(b, to.floor);
@@ -2481,12 +2839,21 @@
       if (!id || !label || !Number.isFinite(floor) || !Number.isFinite(lx) || !Number.isFinite(lz)) {
         return null;
       }
+      // kind хранится явно. Миграция со старого формата: isStairs → 'stairs',
+      // label содержит «холл» → 'hall', иначе 'room'. Раз сохранив, дальше lable не управляет типом.
+      let kind = String(r.kind || '').trim().toLowerCase();
+      if (kind !== 'room' && kind !== 'hall' && kind !== 'stairs') {
+        if (r.isStairs === true) kind = 'stairs';
+        else if (label.toLowerCase().includes('холл')) kind = 'hall';
+        else kind = 'room';
+      }
       return {
         id,
         label,
         floor: Math.max(1, Math.round(floor)),
         local: { x: lx, z: lz },
-        isStairs: r.isStairs === true
+        kind,
+        isStairs: kind === 'stairs'
       };
     }
 
@@ -2518,6 +2885,7 @@
             label: r.label,
             floor: r.floor,
             local: { x: r.local.x, z: r.local.z },
+            kind: r.kind || (r.isStairs ? 'stairs' : 'room'),
             ...(r.isStairs ? { isStairs: true } : {})
           }));
       }
@@ -2537,8 +2905,10 @@
     }
 
     function roomKindOf(r) {
-      if (r.isStairs) return 'stairs';
-      const low = String(r.label || '').toLowerCase();
+      const k = String(r?.kind || '').toLowerCase();
+      if (k === 'stairs' || k === 'hall' || k === 'room') return k;
+      if (r?.isStairs) return 'stairs';
+      const low = String(r?.label || '').toLowerCase();
       if (low.includes('холл')) return 'hall';
       return 'room';
     }
@@ -2629,17 +2999,21 @@
       const b = currentEditorBuilding();
       if (!b) return;
       const floorNow = currentEditorFloor();
+      // Показываем маркеры только текущего этажа: для других этажей координаты «уплывают»,
+      // т.к. рассчитываются по упрощённой формуле без rotation/mirror/scale текущего плана.
+      // Точки других этажей сохранены — переключите этаж в селекторе, чтобы увидеть их.
       for (const r of b.rooms || []) {
+        if (Number(r.floor) !== Number(floorNow)) continue;
         if (!r.local || !Number.isFinite(Number(r.local.x)) || !Number.isFinite(Number(r.local.z))) continue;
         const kind = roomKindOf(r);
         const geom = new THREE.SphereGeometry(0.14, 10, 10);
-        const isCurrentFloor = Number(r.floor) === Number(floorNow);
+        const isSelected = selectedRoomMarkupId === r.id;
         const mat = new THREE.MeshStandardMaterial({
           color: roomColorForKind(kind),
           transparent: true,
-          opacity: isCurrentFloor ? 0.95 : 0.35,
-          emissive: selectedRoomMarkupId === r.id ? 0x1d4ed8 : 0x000000,
-          emissiveIntensity: selectedRoomMarkupId === r.id ? 0.75 : 0
+          opacity: 0.95,
+          emissive: isSelected ? 0x1d4ed8 : 0x000000,
+          emissiveIntensity: isSelected ? 0.75 : 0
         });
         const marker = new THREE.Mesh(geom, mat);
         marker.castShadow = false;
@@ -2682,6 +3056,8 @@
         id: makeRoomId(b.id),
         label: `Новая точка ${b.rooms.length + 1}`,
         floor,
+        kind: 'room',
+        isStairs: false,
         local: {
           x: Number(local.x.toFixed(2)),
           z: Number(local.z.toFixed(2))
@@ -2709,7 +3085,8 @@
       }
       r.label = label;
       r.floor = Number.isFinite(floorVal) ? Math.max(1, floorVal) : 1;
-      r.isStairs = kind === 'stairs';
+      r.kind = kind === 'hall' || kind === 'stairs' || kind === 'room' ? kind : 'room';
+      r.isStairs = r.kind === 'stairs';
       indexRooms();
       populateRouteSelects();
       savePersistedRoomMarkup();
@@ -2741,6 +3118,7 @@
           label: r.label,
           floor: r.floor,
           local: { x: r.local.x, z: r.local.z },
+          kind: r.kind || (r.isStairs ? 'stairs' : 'room'),
           ...(r.isStairs ? { isStairs: true } : {})
         }))
       };
@@ -2755,7 +3133,7 @@
       const b = currentEditorBuilding();
       if (!b) return;
       const raw = window.prompt(
-        `Вставьте JSON с rooms для «${b.name}».\nФормат: { "rooms": [ { "id": "...", "label": "...", "floor": 1, "local": { "x": 0, "z": 0 } } ] }`
+        `Вставьте JSON с rooms для «${b.name}».\nФормат: { "rooms": [ { "id": "...", "label": "...", "floor": 1, "kind": "room", "local": { "x": 0, "z": 0 } } ] }`
       );
       if (raw == null) return;
       try {
@@ -2764,16 +3142,49 @@
         if (!Array.isArray(list)) throw new Error('Ожидался массив rooms');
         const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
         if (!normalized.length) throw new Error('Нет валидных точек');
-        b.rooms = normalized;
-        selectedRoomMarkupId = b.rooms[0].id;
+        const merge = window.confirm(
+          `Импортировать ${normalized.length} точек:\n  OK — добавить к существующим (id-конфликты перезапишут старые)\n  Отмена — заменить ВСЕ точки корпуса`
+        );
+        if (merge) {
+          const byId = new Map((b.rooms || []).map((r) => [r.id, r]));
+          for (const r of normalized) byId.set(r.id, r);
+          b.rooms = [...byId.values()];
+        } else {
+          b.rooms = normalized;
+        }
+        selectedRoomMarkupId = b.rooms[0]?.id || null;
         indexRooms();
         populateRouteSelects();
         savePersistedRoomMarkup();
         refreshRoomMarkupUi();
-        appendInfo(`Импортировано ${normalized.length} точек для «${b.name}».`, false);
+        appendInfo(
+          `${merge ? 'Объединено' : 'Заменено'}: ${normalized.length} точек для «${b.name}» (итого ${b.rooms.length}).`,
+          false
+        );
       } catch (err) {
         appendInfo(`Ошибка импорта JSON: ${err?.message || err}`, true);
       }
+    }
+
+    function clearAllRoomsOfCurrentBuilding() {
+      const b = currentEditorBuilding();
+      if (!b) return;
+      const n = (b.rooms || []).length;
+      if (!n) {
+        appendInfo(`У «${b.name}» уже нет точек.`, false);
+        return;
+      }
+      const ok = window.confirm(
+        `Удалить ВСЕ ${n} точек у «${b.name}»? Действие нельзя отменить (можно восстановить из ранее экспортированного JSON).`
+      );
+      if (!ok) return;
+      b.rooms = [];
+      selectedRoomMarkupId = null;
+      indexRooms();
+      populateRouteSelects();
+      savePersistedRoomMarkup();
+      refreshRoomMarkupUi();
+      appendInfo(`Удалено ${n} точек у «${b.name}».`, false);
     }
 
     function floorPlanWorldPlane() {
@@ -3401,6 +3812,10 @@
         return;
       }
 
+      // Свежий план — старая навигационная сетка для этого (bid, level) больше не валидна
+      // (могли измениться rotation/mirror/scale через MANUAL_BUILDINGS).
+      navGridCache.delete(navGridKey(bid, level));
+
       const url = resolveModelPath(floorDef.modelPath);
       let plan = await loadGLB(url, bid, `floor ${level}`);
       if (!plan) {
@@ -3740,11 +4155,21 @@
 
     document.getElementById('toggle-room-markup-mode').addEventListener('change', (e) => {
       roomMarkupMode = e.target.checked;
+      // Блокируем rotate/pan, чтобы клик по плану не «уезжал» с орбитой камеры. Zoom (колесо) оставляем.
+      if (controls) {
+        if (roomMarkupMode) {
+          controls.enableRotate = false;
+          controls.enablePan = false;
+        } else {
+          controls.enableRotate = true;
+          controls.enablePan = true;
+        }
+      }
       if (roomMarkupMode) {
         const b = currentEditorBuilding();
         const floor = currentEditorFloor();
         appendInfo(
-          `Режим разметки включён. Корпус: <strong>${b?.name || '—'}</strong>, этаж: <strong>${floor}</strong>. Клик по схеме добавляет точку.`,
+          `Режим разметки включён. Корпус: <strong>${b?.name || '—'}</strong>, этаж: <strong>${floor}</strong>. Клик по схеме добавляет точку. Камера временно не вращается.`,
           false
         );
       } else {
@@ -3768,6 +4193,9 @@
     });
     document.getElementById('btn-room-import').addEventListener('click', () => {
       importRoomsToCurrentBuilding();
+    });
+    document.getElementById('btn-room-clear-all').addEventListener('click', () => {
+      clearAllRoomsOfCurrentBuilding();
     });
 
     document.getElementById('btn-reset-camera').addEventListener('click', () => {
