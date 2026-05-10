@@ -499,9 +499,6 @@
       <button type="button" id="btn-reset-camera">Сброс камеры</button>
     </div>
     <div class="row" style="margin-top:8px;">
-      <button type="button" id="btn-nav-debug" class="ghost" title="Подсветить ячейки, которые алгоритм считает стенами">Показать сетку навигации</button>
-    </div>
-    <div class="row" style="margin-top:8px;">
       <button type="button" id="btn-top-view">Вид сверху (орто)</button>
       <button type="button" id="btn-persp-view">Перспектива</button>
     </div>
@@ -2891,114 +2888,6 @@
       return lastDisconnected;
     }
 
-    /* ----- Отладочная визуализация навигационной сетки ------------------------------------------
-     * Включается через UI или console: window.NAV_DEBUG = true; navDebugRefresh();
-     * Рисует красные полупрозрачные квадратики над каждой «занятой» (стеной) ячейкой текущей сетки.
-     */
-    let navDebugMesh = null;
-    let navDebugEnabled = false;
-
-    function clearNavGridDebugVisual() {
-      if (navDebugMesh) {
-        scene.remove(navDebugMesh);
-        navDebugMesh.geometry?.dispose();
-        navDebugMesh.material?.dispose();
-        navDebugMesh = null;
-      }
-    }
-
-    function refreshNavGridDebugVisual() {
-      clearNavGridDebugVisual();
-      if (!navDebugEnabled) return;
-      if (!currentFloorMesh || currentFloorBuildingId == null || currentFloorLevel == null) return;
-      const grid = getNavGridForCurrentFloor(currentFloorBuildingId, currentFloorLevel);
-      if (!grid) return;
-      const cmp = grid.components || grid.computeComponents();
-
-      // Палитра для компонент (чтобы «острова» свободных ячеек различались).
-      const palette = [
-        0x4ade80, 0x22d3ee, 0xf472b6, 0xfb923c, 0xa78bfa, 0xfacc15,
-        0x14b8a6, 0xfb7185, 0x60a5fa, 0xf59e0b
-      ];
-
-      // Считаем размеры компонент: показываем только «существенные» (> 5 ячеек),
-      // мелкие шумовые острова не раскрашиваем — иначе сцена пестрит.
-      const compSizes = new Int32Array(cmp.count);
-      for (let i = 0; i < cmp.labels.length; i++) {
-        const l = cmp.labels[i];
-        if (l >= 0) compSizes[l]++;
-      }
-      const minComp = 5;
-
-      const total = grid.cells.length;
-      const cellsToDraw = []; // [worldX, worldZ, color]
-      const tmp = new THREE.Vector3();
-      const cellW = grid.cellSize * 0.95;
-      for (let i = 0; i < total; i++) {
-        if (grid.cells[i] === 1) {
-          const r = Math.floor(i / grid.cols);
-          const c = i - r * grid.cols;
-          const lp = gridCellToLocal(grid, c, r);
-          tmp.set(lp.x, 0.05, lp.z);
-          currentFloorMesh.localToWorld(tmp);
-          cellsToDraw.push([tmp.x, tmp.y, tmp.z, 0xef4444]);
-        } else {
-          const lbl = cmp.labels[i];
-          if (lbl < 0 || compSizes[lbl] < minComp) continue;
-          const r = Math.floor(i / grid.cols);
-          const c = i - r * grid.cols;
-          const lp = gridCellToLocal(grid, c, r);
-          tmp.set(lp.x, 0.04, lp.z);
-          currentFloorMesh.localToWorld(tmp);
-          cellsToDraw.push([tmp.x, tmp.y, tmp.z, palette[lbl % palette.length]]);
-        }
-      }
-      if (!cellsToDraw.length) return;
-
-      // Группируем по цвету: один InstancedMesh на цвет (палитра ~10 → дёшево).
-      const byColor = new Map();
-      for (const [x, y, z, color] of cellsToDraw) {
-        let arr = byColor.get(color);
-        if (!arr) {
-          arr = [];
-          byColor.set(color, arr);
-        }
-        arr.push([x, y, z]);
-      }
-      const root = new THREE.Group();
-      const dummy = new THREE.Object3D();
-      const planeGeo = new THREE.PlaneGeometry(cellW, cellW);
-      planeGeo.rotateX(-Math.PI / 2);
-      for (const [color, arr] of byColor.entries()) {
-        const mat = new THREE.MeshBasicMaterial({
-          color,
-          transparent: true,
-          opacity: color === 0xef4444 ? 0.5 : 0.22,
-          depthWrite: false
-        });
-        const inst = new THREE.InstancedMesh(planeGeo, mat, arr.length);
-        for (let k = 0; k < arr.length; k++) {
-          dummy.position.set(arr[k][0], arr[k][1], arr[k][2]);
-          dummy.updateMatrix();
-          inst.setMatrixAt(k, dummy.matrix);
-        }
-        inst.instanceMatrix.needsUpdate = true;
-        inst.renderOrder = 999;
-        root.add(inst);
-      }
-      scene.add(root);
-      navDebugMesh = root;
-      console.log(
-        `[Nav] debug: ${cellsToDraw.length} cells (walls red, free regions colored, ${cmp.count} components)`
-      );
-    }
-
-    window.navDebugRefresh = refreshNavGridDebugVisual;
-    Object.defineProperty(window, 'NAV_DEBUG', {
-      get() { return navDebugEnabled; },
-      set(v) { navDebugEnabled = !!v; refreshNavGridDebugVisual(); }
-    });
-
     /* ----- Visibility graph через ручные waypoints ---------------------------------------------
      * Pathfind через waypoints даёт предсказуемые красивые маршруты, обходящие любые «дырки»
      * в автоматической растеризации стен. Алгоритм:
@@ -3223,17 +3112,7 @@
               { x: to.room.local.x, z: to.room.local.z }
             ]);
             if (path?._meta?.allDisconnected) {
-              hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: маркеры в изолированных «островах» сетки (нет коридорной связи). Включите «Показать сетку навигации» — острова раскрашены разным цветом. Скорее всего нужен промежуточный маркер у двери.`;
-              if (!navDebugEnabled) {
-                navDebugEnabled = true;
-                const btn = document.getElementById('btn-nav-debug');
-                if (btn) {
-                  btn.textContent = 'Скрыть сетку навигации';
-                  btn.classList.add('primary');
-                  btn.classList.remove('ghost');
-                }
-                refreshNavGridDebugVisual();
-              }
+              hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: маркеры в изолированных «островах» сетки. Поставьте промежуточный серый узел-маркер у двери, соединяющей эти области.`;
             } else if (wpDiag) {
               const which = wpDiag._missingNeighbor === 'start' ? '«откуда» (Холл/начальная)' : '«куда» (целевая аудитория)';
               hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: ни один серый узел не «видит» точку ${which}. Поставьте серый узел в коридоре прямо у этого маркера (он подсвечен красным шаром).`;
@@ -4252,7 +4131,6 @@
       // Любая перерисовка плана → старый маршрут больше не валиден (новый этаж/корпус/трансформ).
       // Здесь — единая точка очистки, чтобы линия не «уезжала» с floorRouteGroup и routeGroup.
       clearRoute();
-      clearNavGridDebugVisual();
       for (let i = floorPlanRoot.children.length - 1; i >= 0; i--) {
         const ch = floorPlanRoot.children[i];
         if (ch !== floorRouteGroup) floorPlanRoot.remove(ch);
@@ -4363,7 +4241,6 @@
       currentFloorBuildingId = bid;
       currentFloorLevel = level;
       refreshRoomMarkupVisuals();
-      if (navDebugEnabled) refreshNavGridDebugVisual();
     }
 
     function syncFloorPlanToggleUi() {
@@ -4817,16 +4694,6 @@
 
     document.getElementById('btn-build-route').addEventListener('click', buildRoute);
     document.getElementById('btn-clear-route').addEventListener('click', clearRoute);
-
-    document.getElementById('btn-nav-debug').addEventListener('click', (e) => {
-      navDebugEnabled = !navDebugEnabled;
-      e.currentTarget.textContent = navDebugEnabled
-        ? 'Скрыть сетку навигации'
-        : 'Показать сетку навигации';
-      e.currentTarget.classList.toggle('primary', navDebugEnabled);
-      e.currentTarget.classList.toggle('ghost', !navDebugEnabled);
-      refreshNavGridDebugVisual();
-    });
 
     document.getElementById('search-room').addEventListener('input', (e) => {
       const q = e.target.value.trim().toLowerCase();
