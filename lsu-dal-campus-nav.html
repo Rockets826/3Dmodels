@@ -440,8 +440,8 @@
       <div id="room-editor-panel" class="room-editor-panel" hidden>
         <p class="hint">Работает на выбранных корпусе и этаже. Выберите точку из списка или кликните по плану, чтобы добавить новую.</p>
         <div class="toggle-row" style="margin-bottom:8px;">
-          <span>Создавать как узлы коридора (для маршрутов)</span>
-          <input type="checkbox" id="toggle-room-as-waypoint" />
+          <span>Создавать новые точки как «Узел коридора» (скрытый якорь)</span>
+          <input type="checkbox" id="toggle-add-as-corridor" />
         </div>
         <div class="room-editor-grid">
           <div class="field" style="margin:0;">
@@ -463,7 +463,7 @@
                 <option value="room">Аудитория/точка</option>
                 <option value="hall">Холл</option>
                 <option value="stairs">Лестница</option>
-                <option value="waypoint">Узел коридора (скрытый)</option>
+                <option value="corridor">Узел коридора (скрытый якорь)</option>
               </select>
             </div>
           </div>
@@ -471,6 +471,17 @@
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-update" class="primary">Сохранить точку</button>
             <button type="button" id="btn-room-delete" class="ghost">Удалить точку</button>
+          </div>
+          <div id="path-editor-panel" style="margin-top:12px;padding:10px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);border-radius:6px;" hidden>
+            <p class="mini" id="path-editor-status" style="margin:0 0 8px 0;">Маршрут от Холла: не нарисован</p>
+            <div class="row" style="gap:8px;flex-wrap:wrap;">
+              <button type="button" id="btn-path-draw" class="primary">Рисовать путь от Холла</button>
+              <button type="button" id="btn-path-finish" class="primary" hidden>Готово</button>
+              <button type="button" id="btn-path-undo" class="ghost" hidden>Отменить точку</button>
+              <button type="button" id="btn-path-cancel" class="ghost" hidden>Отмена</button>
+              <button type="button" id="btn-path-delete" class="ghost" hidden>Удалить путь</button>
+            </div>
+            <p class="hint" id="path-editor-hint" style="margin:8px 0 0 0;">Выберите точку в списке. Путь рисуется кликами по плану от Холла этажа до этой точки.</p>
           </div>
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-export">Экспорт JSON</button>
@@ -2361,22 +2372,6 @@
       floorRouteGroup.add(line);
     }
 
-    /**
-     * Линия маршрута на текущем плане, заданная в локальных координатах плана.
-     * Точки переводятся в мировые через currentFloorMesh.localToWorld, поэтому корректно
-     * учитываются rotation/mirror/scale (включая floorPlanMatchBuildingFootprint, который
-     * сильно «раздувает» plan.scale у LOD-корпусов).
-     */
-    function addPlanLocalPathLine(localPoints, yOffset = 0.1, color = 0x22c55e) {
-      if (!currentFloorMesh || !localPoints?.length) return;
-      const worldPts = localPoints.map((p) =>
-        currentFloorMesh.localToWorld(new THREE.Vector3(p.x, yOffset, p.z))
-      );
-      const geo = new THREE.BufferGeometry().setFromPoints(worldPts);
-      const line = new THREE.Line(geo, lineMaterial(color));
-      routeGroup.add(line);
-    }
-
     function syncFloorRouteGroupPosition(building) {
       if (!building) return;
       const s = MODEL_CONFIG.FLOOR_PLAN_SCALE;
@@ -2426,614 +2421,73 @@
       return building.rooms.find((r) => r.floor === floor && r.isStairs) || null;
     }
 
-    /* ======================== Indoor pathfinding (A* по растровой сетке стен) ========================
-     * Кэшируем NavGrid по ключу `${bid}@${level}`. Сетка считается в локальной системе
-     * currentFloorMesh, поэтому валидна, пока показывается тот же план этажа.
-     * Очищаем кэш в updateFloorPlan при смене плана.
-     * ----------------------------------------------------------------------------------------------- */
-    const navGridCache = new Map();
 
-    function navGridKey(bid, level) {
-      return `${bid}@${level}`;
-    }
-
-    function makeEmptyNavGrid(localBox, cellSize) {
-      const cols = Math.max(1, Math.ceil((localBox.max.x - localBox.min.x) / cellSize));
-      const rows = Math.max(1, Math.ceil((localBox.max.z - localBox.min.z) / cellSize));
-      return {
-        minX: localBox.min.x,
-        minZ: localBox.min.z,
-        cellSize,
-        cols,
-        rows,
-        cells: new Uint8Array(cols * rows)
-      };
-    }
-
-    function gridIdx(g, c, r) {
-      return r * g.cols + c;
-    }
-    function gridSetBlocked(g, c, r) {
-      if (c < 0 || r < 0 || c >= g.cols || r >= g.rows) return;
-      g.cells[gridIdx(g, c, r)] = 1;
-    }
-    function gridIsBlocked(g, c, r) {
-      if (c < 0 || r < 0 || c >= g.cols || r >= g.rows) return true;
-      return g.cells[gridIdx(g, c, r)] === 1;
-    }
-    function gridLocalToCell(g, lx, lz) {
-      return [
-        Math.floor((lx - g.minX) / g.cellSize),
-        Math.floor((lz - g.minZ) / g.cellSize)
-      ];
-    }
-    function gridCellToLocal(g, c, r) {
-      return {
-        x: g.minX + (c + 0.5) * g.cellSize,
-        z: g.minZ + (r + 0.5) * g.cellSize
-      };
-    }
-
-    /**
-     * Растеризовать план этажа в сетку проходимости.
-     * - bbox считается по вершинам всех мешей в локальной системе plan;
-     * - стенами считаются треугольники, чья центральная Y лежит в средних 80% высоты
-     *   (отрезает пол/потолок/крышу);
-     * - после растеризации стены расширяются на agentRadius (≈0.4 м), чтобы маршрут
-     *   проходил «по центру коридора», не цепляя углы.
-     */
-    /**
-     * Применить «раздувание» (dilation Чебышёва) занятых ячеек на N клеток.
-     * Используется на raw-сетке: ту же сетку можно много раз перевыставить под разную inflate.
-     */
-    function dilateGridCells(rawCells, cols, rows, n) {
-      if (n <= 0) return new Uint8Array(rawCells);
-      const out = new Uint8Array(rawCells.length);
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (rawCells[r * cols + c] !== 1) continue;
-          const r0 = Math.max(0, r - n);
-          const r1 = Math.min(rows - 1, r + n);
-          const c0 = Math.max(0, c - n);
-          const c1 = Math.min(cols - 1, c + n);
-          for (let rr = r0; rr <= r1; rr++) {
-            for (let cc = c0; cc <= c1; cc++) out[rr * cols + cc] = 1;
-          }
-        }
-      }
-      return out;
-    }
-
-    function rasterizePlanToNavGrid(plan, agentRadiusMeters = 0.4) {
-      if (!plan) return null;
-      plan.updateMatrixWorld(true);
-      const planInv = new THREE.Matrix4().copy(plan.matrixWorld).invert();
-
-      // КРИТИЧНО: считаем сколько мировых метров приходится на 1 локальную единицу плана
-      // (по горизонтали). У LOD-корпусов floorPlanMatchBuildingFootprint раздувает plan.scale
-      // до 10–20×: 1 локальная единица может равняться 10–20 м реального мира. Без этого
-      // пересчёта inflate(0.4 м) и cellSize(0.25 м) считаются в локальных и съедают всё здание.
-      const o0 = new THREE.Vector3().setFromMatrixPosition(plan.matrixWorld);
-      const oX = new THREE.Vector3(1, 0, 0).applyMatrix4(plan.matrixWorld);
-      const oZ = new THREE.Vector3(0, 0, 1).applyMatrix4(plan.matrixWorld);
-      const sxScale = o0.distanceTo(oX) || 1;
-      const szScale = o0.distanceTo(oZ) || 1;
-      const localToWorldScale = (sxScale + szScale) * 0.5;
-
-      const localBox = new THREE.Box3();
-      const v = new THREE.Vector3();
-      plan.traverse((o) => {
-        if (!o.isMesh || !o.geometry) return;
-        o.updateMatrixWorld(true);
-        const m = new THREE.Matrix4().multiplyMatrices(planInv, o.matrixWorld);
-        const pos = o.geometry.attributes.position;
-        if (!pos) return;
-        for (let i = 0; i < pos.count; i++) {
-          v.fromBufferAttribute(pos, i).applyMatrix4(m);
-          localBox.expandByPoint(v);
-        }
-      });
-      if (localBox.isEmpty()) return null;
-
-      // pad в МИРОВЫХ метрах, переводим в локальные через localToWorldScale.
-      const padWorld = Math.max(1, agentRadiusMeters * 2);
-      const padLocal = padWorld / localToWorldScale;
-      localBox.min.x -= padLocal;
-      localBox.min.z -= padLocal;
-      localBox.max.x += padLocal;
-      localBox.max.z += padLocal;
-
-      // Целимся в 0.25 м/ячейку реального мира; зажимаем 0.15…0.6 м.
-      // При очень больших планах ограничиваем грид 320 ячеек по длинной стороне.
-      // 0.15 м/ячейку: для тонких стен (~0.2 м) хватает, чтобы стена не «дырявилась».
-      const targetCellWorld = 0.15;
-      let cellSizeWorld = Math.max(0.1, Math.min(0.6, targetCellWorld));
-      let cellSize = cellSizeWorld / localToWorldScale;
-      const sizeX = localBox.max.x - localBox.min.x;
-      const sizeZ = localBox.max.z - localBox.min.z;
-      const localSpan = Math.max(sizeX, sizeZ);
-      const maxCellsPerSide = 320;
-      if (localSpan / cellSize > maxCellsPerSide) {
-        cellSize = localSpan / maxCellsPerSide;
-        cellSizeWorld = cellSize * localToWorldScale;
-      }
-
-      const grid = makeEmptyNavGrid(localBox, cellSize);
-      const yMin = localBox.min.y;
-      const yMax = localBox.max.y;
-      const yRange = yMax - yMin;
-      const yLow = yMin + yRange * 0.1;
-      const yHigh = yMin + yRange * 0.9;
-
-      const a = new THREE.Vector3();
-      const b2 = new THREE.Vector3();
-      const c2 = new THREE.Vector3();
-      let triBlocked = 0;
-
-      plan.traverse((o) => {
-        if (!o.isMesh || !o.geometry) return;
-        const m = new THREE.Matrix4().multiplyMatrices(planInv, o.matrixWorld);
-        const pos = o.geometry.attributes.position;
-        if (!pos) return;
-        const idx = o.geometry.index;
-        const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3);
-        for (let t = 0; t < triCount; t++) {
-          const ia = idx ? idx.getX(t * 3) : t * 3;
-          const ib = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
-          const ic = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
-          a.fromBufferAttribute(pos, ia).applyMatrix4(m);
-          b2.fromBufferAttribute(pos, ib).applyMatrix4(m);
-          c2.fromBufferAttribute(pos, ic).applyMatrix4(m);
-          const yMid = (a.y + b2.y + c2.y) / 3;
-          if (yMid < yLow || yMid > yHigh) continue;
-
-          const minCx = Math.floor((Math.min(a.x, b2.x, c2.x) - grid.minX) / cellSize);
-          const maxCx = Math.floor((Math.max(a.x, b2.x, c2.x) - grid.minX) / cellSize);
-          const minCz = Math.floor((Math.min(a.z, b2.z, c2.z) - grid.minZ) / cellSize);
-          const maxCz = Math.floor((Math.max(a.z, b2.z, c2.z) - grid.minZ) / cellSize);
-          for (let r = minCz; r <= maxCz; r++) {
-            for (let cc = minCx; cc <= maxCx; cc++) {
-              gridSetBlocked(grid, cc, r);
-              triBlocked++;
-            }
-          }
-        }
-      });
-
-      // raw — стены без раздувания. Под разные agentRadius применим dilation на лету.
-      grid.rawCells = grid.cells;
-      grid.localToWorldScale = localToWorldScale;
-      grid.cellSizeWorld = cellSizeWorld;
-      grid.applyAgentRadius = function (radiusMeters) {
-        const n = Math.max(0, Math.round(radiusMeters / this.cellSizeWorld));
-        this.cells = dilateGridCells(this.rawCells, this.cols, this.rows, n);
-        this.currentInflate = n;
-        this.currentRadius = radiusMeters;
-        this.components = null;
-      };
-      // Связные компоненты свободных ячеек (BFS по 4-связности).
-      // Используются и в pathfind (отсев «start и end в разных островах»), и в дебаг-визуале.
-      grid.computeComponents = function () {
-        const total = this.cells.length;
-        const labels = new Int32Array(total).fill(-1);
-        let next = 0;
-        const stack = [];
-        for (let i = 0; i < total; i++) {
-          if (this.cells[i] === 1 || labels[i] !== -1) continue;
-          const lbl = next++;
-          stack.length = 0;
-          stack.push(i);
-          labels[i] = lbl;
-          while (stack.length) {
-            const cur = stack.pop();
-            const r = Math.floor(cur / this.cols);
-            const c = cur - r * this.cols;
-            const neigh = [
-              [c + 1, r],
-              [c - 1, r],
-              [c, r + 1],
-              [c, r - 1]
-            ];
-            for (const [nc, nr] of neigh) {
-              if (nc < 0 || nr < 0 || nc >= this.cols || nr >= this.rows) continue;
-              const ni = nr * this.cols + nc;
-              if (this.cells[ni] === 1 || labels[ni] !== -1) continue;
-              labels[ni] = lbl;
-              stack.push(ni);
-            }
-          }
-        }
-        this.components = { labels, count: next };
-        return this.components;
-      };
-      grid.applyAgentRadius(agentRadiusMeters);
-
-      console.log(
-        `[Nav] grid ${grid.cols}x${grid.rows} cellWorld=${cellSizeWorld.toFixed(2)}m (local ${cellSize.toFixed(3)}) scale=${localToWorldScale.toFixed(2)} blockedTri=${triBlocked} inflate=${grid.currentInflate}`
+    /* ============================ Маршруты по ручным ломаным ===================================
+     * Каждая точка (аудитория/лестница) хранит corridorPath — массив локальных XZ-точек,
+     * образующих ломаную «Холл этажа → эта точка». Эту ломаную пользователь рисует вручную
+     * в режиме разметки.
+     *
+     * Маршрут A→B на одном этаже = A → reverse(corridorPath_A) → Холл → corridorPath_B → B.
+     * Маршрут между этажами = на этаже A добираемся до лестницы тем же приёмом, переходим
+     * вертикально, и на этаже B от лестницы тем же приёмом до цели.
+     * --------------------------------------------------------------------------------------- */
+    function findHallRoom(building, floor) {
+      return (
+        (building.rooms || []).find(
+          (r) => Number(r.floor) === Number(floor) && roomKindOf(r) === 'hall'
+        ) || null
       );
-      return grid;
     }
 
-    function findNearestFreeCell(g, c0, r0, maxRadius = 60) {
-      if (!gridIsBlocked(g, c0, r0)) return [c0, r0];
-      const visited = new Uint8Array(g.cells.length);
-      visited[gridIdx(g, c0, r0)] = 1;
-      let frontier = [[c0, r0, 0]];
-      while (frontier.length) {
-        const next = [];
-        for (const [cc, rr, d] of frontier) {
-          if (d > maxRadius) return null;
-          for (const [dc, dr] of [
-            [1, 0],
-            [-1, 0],
-            [0, 1],
-            [0, -1]
-          ]) {
-            const nc = cc + dc;
-            const nr = rr + dr;
-            if (nc < 0 || nr < 0 || nc >= g.cols || nr >= g.rows) continue;
-            const ki = gridIdx(g, nc, nr);
-            if (visited[ki]) continue;
-            visited[ki] = 1;
-            if (!gridIsBlocked(g, nc, nr)) return [nc, nr];
-            next.push([nc, nr, d + 1]);
-          }
-        }
-        frontier = next;
-      }
-      return null;
-    }
-
-    function navHeuristic(c1, r1, c2, r2) {
-      const dx = Math.abs(c1 - c2);
-      const dy = Math.abs(r1 - r2);
-      const d = Math.min(dx, dy);
-      const s = Math.max(dx, dy);
-      return d * Math.SQRT2 + (s - d);
-    }
-
-    function lineOfSight(grid, c0, r0, c1, r1) {
-      let dx = Math.abs(c1 - c0);
-      let dy = Math.abs(r1 - r0);
-      const sx = c0 < c1 ? 1 : -1;
-      const sy = r0 < r1 ? 1 : -1;
-      let err = dx - dy;
-      let cc = c0;
-      let rr = r0;
-      let safety = grid.cols * grid.rows;
-      while (safety-- > 0) {
-        if (gridIsBlocked(grid, cc, rr)) return false;
-        if (cc === c1 && rr === r1) return true;
-        const e2 = 2 * err;
-        if (e2 > -dy) {
-          err -= dy;
-          cc += sx;
-        }
-        if (e2 < dx) {
-          err += dx;
-          rr += sy;
-        }
-      }
-      return false;
-    }
-
-    function smoothCellPath(grid, cells) {
-      if (cells.length <= 2) return cells;
-      const out = [cells[0]];
-      let i = 0;
-      let safety = cells.length + 5;
-      while (i < cells.length - 1 && safety-- > 0) {
-        let j = cells.length - 1;
-        while (
-          j > i + 1 &&
-          !lineOfSight(grid, cells[i][0], cells[i][1], cells[j][0], cells[j][1])
-        ) {
-          j--;
-        }
-        out.push(cells[j]);
-        i = j;
-      }
-      return out;
-    }
-
-    function findPathOnNavGrid(grid, start, end) {
-      if (!grid) return null;
-      const [sc0, sr0] = gridLocalToCell(grid, start.x, start.z);
-      const [ec0, er0] = gridLocalToCell(grid, end.x, end.z);
-      let sc = sc0, sr = sr0, ec = ec0, er = er0;
-      const startBlocked = gridIsBlocked(grid, sc, sr);
-      const endBlocked = gridIsBlocked(grid, ec, er);
-      if (startBlocked) {
-        const fix = findNearestFreeCell(grid, sc, sr, 60);
-        if (!fix) return null;
-        sc = fix[0];
-        sr = fix[1];
-      }
-      if (endBlocked) {
-        const fix = findNearestFreeCell(grid, ec, er, 60);
-        if (!fix) return null;
-        ec = fix[0];
-        er = fix[1];
-      }
-      if (sc === ec && sr === er) {
-        return [
-          { x: start.x, z: start.z },
-          { x: end.x, z: end.z }
-        ];
-      }
-      // Быстрый отсев: start и end в разных «островах» свободных ячеек — A* всё равно
-      // не свяжет, экономим миллисекунды и даём понятный диагноз наверх.
-      const cmp = grid.components || grid.computeComponents();
-      const sLbl = cmp.labels[gridIdx(grid, sc, sr)];
-      const eLbl = cmp.labels[gridIdx(grid, ec, er)];
-      if (sLbl !== eLbl) {
-        const out = [
-          { x: start.x, z: start.z },
-          { x: end.x, z: end.z }
-        ];
-        out._meta = { disconnected: true, sLbl, eLbl, radius: grid.currentRadius };
-        return out;
-      }
-      const total = grid.cols * grid.rows;
-      const gScore = new Float32Array(total);
-      for (let i = 0; i < total; i++) gScore[i] = Infinity;
-      const cameFrom = new Int32Array(total);
-      cameFrom.fill(-1);
-      const closed = new Uint8Array(total);
-      const startIdx = gridIdx(grid, sc, sr);
-      const endIdx = gridIdx(grid, ec, er);
-      gScore[startIdx] = 0;
-      // Простая «очередь» через массив с поиском минимума: для сеток ≲300×300 ОК.
-      // При торможении перейти на бинарную кучу.
-      const open = [[navHeuristic(sc, sr, ec, er), startIdx]];
-      const dirs = [
-        [1, 0, 1],
-        [-1, 0, 1],
-        [0, 1, 1],
-        [0, -1, 1],
-        [1, 1, Math.SQRT2],
-        [1, -1, Math.SQRT2],
-        [-1, 1, Math.SQRT2],
-        [-1, -1, Math.SQRT2]
-      ];
-      let found = startIdx === endIdx;
-      let safety = total * 4;
-      while (open.length && safety-- > 0) {
-        let minI = 0;
-        for (let i = 1; i < open.length; i++) {
-          if (open[i][0] < open[minI][0]) minI = i;
-        }
-        const [, cidx] = open.splice(minI, 1)[0];
-        if (closed[cidx]) continue;
-        closed[cidx] = 1;
-        if (cidx === endIdx) {
-          found = true;
-          break;
-        }
-        const cR = Math.floor(cidx / grid.cols);
-        const cC = cidx - cR * grid.cols;
-        for (const [dc, dr, w] of dirs) {
-          const nc = cC + dc;
-          const nr = cR + dr;
-          if (nc < 0 || nr < 0 || nc >= grid.cols || nr >= grid.rows) continue;
-          if (gridIsBlocked(grid, nc, nr)) continue;
-          // Запрет «срезать угол» через диагональ, если соседняя ортогональная — стена.
-          if (Math.abs(dc) === 1 && Math.abs(dr) === 1) {
-            if (gridIsBlocked(grid, cC + dc, cR) || gridIsBlocked(grid, cC, cR + dr)) continue;
-          }
-          const nidx = gridIdx(grid, nc, nr);
-          if (closed[nidx]) continue;
-          const tentative = gScore[cidx] + w;
-          if (tentative < gScore[nidx]) {
-            gScore[nidx] = tentative;
-            cameFrom[nidx] = cidx;
-            open.push([tentative + navHeuristic(nc, nr, ec, er), nidx]);
-          }
-        }
-      }
-      if (!found) return null;
-
-      const cells = [];
-      let cur = endIdx;
-      let s2 = total;
-      while (cur !== -1 && s2-- > 0) {
-        const r = Math.floor(cur / grid.cols);
-        const c = cur - r * grid.cols;
-        cells.push([c, r]);
-        if (cur === startIdx) break;
-        cur = cameFrom[cur];
-      }
-      cells.reverse();
-
-      const smoothed = smoothCellPath(grid, cells);
-      const out = smoothed.map(([c, r]) => gridCellToLocal(grid, c, r));
-      out[0] = { x: start.x, z: start.z };
-      out[out.length - 1] = { x: end.x, z: end.z };
-      out._meta = {
-        cells: cells.length,
-        smoothed: smoothed.length,
-        startBlocked,
-        endBlocked,
-        radius: grid.currentRadius
-      };
-      return out;
+    function getCorridorPath(room) {
+      if (!Array.isArray(room?.corridorPath)) return [];
+      return room.corridorPath
+        .map((p) => ({ x: Number(p?.x), z: Number(p?.z) }))
+        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
     }
 
     /**
-     * Многоступенчатый поиск пути: пробуем несколько радиусов агента сверху-вниз.
-     * Идея: сначала «безопасный» (0.4 м с запасом от стен), потом всё агрессивнее.
-     * Если коридор узкий или маркер чуть-чуть в стене — последняя попытка с radius=0
-     *  почти всегда находит путь, ценой того что линия может пройти впритирку к стене.
+     * Собирает локальные точки маршрута from → Холл → to внутри одного этажа.
+     * Возвращает { points, hallId, missingFor: null|'from'|'to'|'hall' }.
+     * Если у точки нет corridorPath (и она не сам Холл), возвращает прямую и сообщает об этом.
      */
-    function findPathMultiRadius(grid, start, end) {
-      const radii = [0.4, 0.25, 0.12, 0];
-      let lastDisconnected = null;
-      for (const r of radii) {
-        if (Math.abs((grid.currentRadius ?? -1) - r) > 1e-3) {
-          grid.applyAgentRadius(r);
-        }
-        const path = findPathOnNavGrid(grid, start, end);
-        if (!path) continue;
-        if (path._meta?.disconnected) {
-          lastDisconnected = path;
-          continue;
-        }
-        console.log(`[Nav] path found at radius=${r}m`, path._meta);
-        return path;
+    function buildOnFloorRoute(building, floor, fromRoom, toRoom) {
+      const hall = findHallRoom(building, floor);
+      if (!hall) {
+        return {
+          points: [
+            { x: fromRoom.local.x, z: fromRoom.local.z },
+            { x: toRoom.local.x, z: toRoom.local.z }
+          ],
+          missingFor: 'hall'
+        };
       }
-      if (lastDisconnected) {
-        console.warn('[Nav] start & end in disconnected free regions even at radius=0', lastDisconnected._meta);
-        lastDisconnected._meta.allDisconnected = true;
-      }
-      return lastDisconnected;
-    }
+      const fromIsHall = String(fromRoom.id) === String(hall.id);
+      const toIsHall = String(toRoom.id) === String(hall.id);
+      const fromCorr = getCorridorPath(fromRoom);
+      const toCorr = getCorridorPath(toRoom);
+      let missingFor = null;
+      if (!fromIsHall && fromCorr.length === 0) missingFor = 'from';
+      else if (!toIsHall && toCorr.length === 0) missingFor = 'to';
 
-    /* ----- Visibility graph через ручные waypoints ---------------------------------------------
-     * Pathfind через waypoints даёт предсказуемые красивые маршруты, обходящие любые «дырки»
-     * в автоматической растеризации стен. Алгоритм:
-     *   1. Берём все waypoints текущего корпуса+этажа + start/end.
-     *   2. Соединяем те пары, между которыми есть прямая видимость по СТЕНАМ ПЛАНА (raw cells).
-     *   3. Дейкстра по графу. Если start/end не цепляются за граф или граф не связывает их —
-     *      возвращаем null, и наверху сработает fallback на A*.
-     */
-    /**
-     * Снапит локальные XZ-координаты в центр ближайшей RAW-свободной ячейки.
-     * Нужен потому, что маркеры (Холл/аудитория) часто стоят впритирку к стене,
-     * и линия видимости из самой точки сразу режется первой же стеновой ячейкой.
-     */
-    function snapToRawFreeLocal(grid, lx, lz) {
-      const [c0, r0] = gridLocalToCell(grid, lx, lz);
-      const saved = grid.cells;
-      grid.cells = grid.rawCells;
-      const fix = gridIsBlocked(grid, c0, r0)
-        ? findNearestFreeCell(grid, c0, r0, 200)
-        : [c0, r0];
-      grid.cells = saved;
-      if (!fix) return null;
-      const lp = gridCellToLocal(grid, fix[0], fix[1]);
-      return { x: lp.x, z: lp.z, snapped: !(fix[0] === c0 && fix[1] === r0) };
-    }
+      const out = [];
+      out.push({ x: fromRoom.local.x, z: fromRoom.local.z });
+      if (!fromIsHall) {
+        for (let i = fromCorr.length - 1; i >= 0; i--) out.push(fromCorr[i]);
+      }
+      out.push({ x: hall.local.x, z: hall.local.z });
+      if (!toIsHall) {
+        for (const p of toCorr) out.push(p);
+      }
+      out.push({ x: toRoom.local.x, z: toRoom.local.z });
 
-    function visibilityCheck(grid, ax, az, bx, bz) {
-      const [c1, r1] = gridLocalToCell(grid, ax, az);
-      const [c2, r2] = gridLocalToCell(grid, bx, bz);
-      // Проверяем по raw cells (без раздувания агента) — линия видна, если не пересекает стену
-      // как она нарисована в плане. Это терпимо для пользователя, ставящего узлы вручную.
-      const saved = grid.cells;
-      grid.cells = grid.rawCells;
-      const ok = lineOfSight(grid, c1, r1, c2, r2);
-      grid.cells = saved;
-      return ok;
-    }
-
-    function findPathViaWaypoints(grid, start, end, waypoints) {
-      if (!grid) return null;
-      // Перед проверкой видимости снапим start/end в ближайшую raw-free ячейку.
-      // Это часто и есть первый шаг к успеху: маркер «Холл» ставится впритык к стене,
-      // и LOS из самой точки сразу режется. После snap'а видимость работает.
-      const sFix = snapToRawFreeLocal(grid, start.x, start.z);
-      const eFix = snapToRawFreeLocal(grid, end.x, end.z);
-      if (!sFix || !eFix) {
-        console.warn('[Nav] waypoints: cannot snap start/end to free cell', { sFix, eFix });
-        return null;
+      // Удаляем подряд идущие дубли — они появляются, если, например, fromRoom=Холл.
+      const dedup = [];
+      for (const p of out) {
+        const last = dedup[dedup.length - 1];
+        if (!last || Math.hypot(last.x - p.x, last.z - p.z) > 1e-4) dedup.push(p);
       }
-      // Также снапим waypoints — на случай, если узел был поставлен впритык к стене.
-      const wpSnapped = waypoints
-        .map((w) => snapToRawFreeLocal(grid, w.local.x, w.local.z))
-        .filter(Boolean);
-
-      // Узлы графа: 0 = start, 1 = end, дальше — waypoints
-      const nodes = [
-        { x: sFix.x, z: sFix.z, isAnchor: true },
-        { x: eFix.x, z: eFix.z, isAnchor: true },
-        ...wpSnapped.map((w) => ({ x: w.x, z: w.z, isAnchor: false }))
-      ];
-      const n = nodes.length;
-      const edges = Array.from({ length: n }, () => new Map());
-      for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-          if (!visibilityCheck(grid, nodes[i].x, nodes[i].z, nodes[j].x, nodes[j].z)) continue;
-          const dx = nodes[i].x - nodes[j].x;
-          const dz = nodes[i].z - nodes[j].z;
-          const d = Math.hypot(dx, dz);
-          edges[i].set(j, d);
-          edges[j].set(i, d);
-        }
-      }
-      console.log(
-        `[Nav] waypoints graph: nodes=${n} (wps=${wpSnapped.length}), startNeighbors=${edges[0].size}, endNeighbors=${edges[1].size}`
-      );
-      if (edges[0].size === 0 || edges[1].size === 0) {
-        const which = edges[0].size === 0 ? 'start' : 'end';
-        const local = which === 'start' ? sFix : eFix;
-        const orig = which === 'start' ? start : end;
-        console.warn(
-          `[Nav] waypoints: ${which} has no visible neighbor — поставьте серый узел в коридоре рядом с этой точкой`
-        );
-        return { _missingNeighbor: which, snappedLocal: local, origLocal: orig };
-      }
-
-      // Дейкстра 0 → 1. Для n ≲ 200 простой O(n²) сойдёт.
-      const dist = new Array(n).fill(Infinity);
-      const prev = new Array(n).fill(-1);
-      const closed = new Uint8Array(n);
-      dist[0] = 0;
-      for (let it = 0; it < n; it++) {
-        let u = -1;
-        let best = Infinity;
-        for (let k = 0; k < n; k++) {
-          if (!closed[k] && dist[k] < best) {
-            best = dist[k];
-            u = k;
-          }
-        }
-        if (u === -1) break;
-        closed[u] = 1;
-        if (u === 1) break;
-        for (const [v, w] of edges[u]) {
-          if (closed[v]) continue;
-          const nd = dist[u] + w;
-          if (nd < dist[v]) {
-            dist[v] = nd;
-            prev[v] = u;
-          }
-        }
-      }
-      if (dist[1] === Infinity) {
-        console.warn('[Nav] waypoints: graph has no path between start and end (узлы не образуют связную цепочку)');
-        return null;
-      }
-
-      const idxPath = [];
-      let cur = 1;
-      while (cur !== -1) {
-        idxPath.push(cur);
-        cur = prev[cur];
-      }
-      idxPath.reverse();
-      const out = idxPath.map((i) => ({ x: nodes[i].x, z: nodes[i].z }));
-      // Возвращаем настоящие исходные start/end, чтобы линия начиналась/заканчивалась
-      // ровно у маркера, а не в центре «спасательной» ячейки.
-      out[0] = { x: start.x, z: start.z };
-      out[out.length - 1] = { x: end.x, z: end.z };
-      out._meta = { kind: 'waypoint-graph', nodes: n, hops: idxPath.length - 1 };
-      return out;
-    }
-
-    function getNavGridForCurrentFloor(bid, level) {
-      if (
-        !currentFloorMesh ||
-        currentFloorBuildingId !== bid ||
-        Number(currentFloorLevel) !== Number(level)
-      ) {
-        return null;
-      }
-      const key = navGridKey(bid, level);
-      let grid = navGridCache.get(key);
-      if (grid) return grid;
-      grid = rasterizePlanToNavGrid(currentFloorMesh, 0.4);
-      if (grid) navGridCache.set(key, grid);
-      return grid;
+      return { points: dedup, missingFor, hallId: hall.id };
     }
 
     function buildRoute() {
@@ -3053,100 +2507,75 @@
       const hint = document.createElement('div');
       hint.className = 'route-hint';
 
-      if (from.buildingId === to.buildingId) {
-        const b = buildingDataById.get(from.buildingId);
-        syncFloorRouteGroupPosition(b);
-        if (from.floor === to.floor) {
-          const grid = getNavGridForCurrentFloor(b.id, from.floor);
-          let path = null;
-          // Сначала пробуем visibility graph через waypoints этого этажа — самый
-          // надёжный путь, если пользователь разметил коридоры.
-          let wpDiag = null;
-          if (grid) {
-            const wps = (b.rooms || []).filter(
-              (r) => roomKindOf(r) === 'waypoint' && Number(r.floor) === Number(from.floor)
-            );
-            if (wps.length) {
-              const wpPath = findPathViaWaypoints(grid, from.room.local, to.room.local, wps);
-              if (Array.isArray(wpPath)) {
-                path = wpPath;
-                console.log(`[Nav] path via waypoints: hops=${wpPath._meta.hops} of ${wps.length} nodes`);
-              } else if (wpPath?._missingNeighbor) {
-                wpDiag = wpPath;
-              }
-            }
-          }
-          // Если waypoints нет / не помогли — A* по растровой сетке.
-          if (!path && grid) path = findPathMultiRadius(grid, from.room.local, to.room.local);
-          // Подсказка: маркер «куда добавить узел», если waypoint-граф не сошёлся.
-          if (wpDiag && !path?.length) {
-            const w = new THREE.Vector3(wpDiag.snappedLocal.x, 0.4, wpDiag.snappedLocal.z);
-            currentFloorMesh.localToWorld(w);
-            const hintGeo = new THREE.SphereGeometry(0.6, 16, 16);
-            const hintMat = new THREE.MeshBasicMaterial({
-              color: 0xef4444,
-              transparent: true,
-              opacity: 0.55,
-              depthWrite: false
-            });
-            const hintMesh = new THREE.Mesh(hintGeo, hintMat);
-            hintMesh.position.copy(w);
-            hintMesh.renderOrder = 1000;
-            routeGroup.add(hintMesh);
-          }
-          const ok = path && path.length > 1 && !path._meta?.allDisconnected;
-          if (ok) {
-            addPlanLocalPathLine(path);
-            const viaWp = path._meta?.kind === 'waypoint-graph';
-            const tight = !viaWp && (path._meta?.radius ?? 0.4) < 0.4;
-            if (viaWp) {
-              hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: маршрут через ${path.length - 2} узл(а/ов) коридора.`;
-            } else {
-              hint.textContent = tight
-                ? `Внутри «${b.name}», этаж ${from.floor}: маршрут по коридорам (${path.length - 1} сегмент(ов), узкий проход — линия близко к стене).`
-                : `Внутри «${b.name}», этаж ${from.floor}: маршрут по коридорам (${path.length - 1} сегмент(ов)).`;
-            }
-          } else {
-            addPlanLocalPathLine([
-              { x: from.room.local.x, z: from.room.local.z },
-              { x: to.room.local.x, z: to.room.local.z }
-            ]);
-            if (path?._meta?.allDisconnected) {
-              hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: маркеры в изолированных «островах» сетки. Поставьте промежуточный серый узел-маркер у двери, соединяющей эти области.`;
-            } else if (wpDiag) {
-              const which = wpDiag._missingNeighbor === 'start' ? '«откуда» (Холл/начальная)' : '«куда» (целевая аудитория)';
-              hint.textContent = `Внутри «${b.name}», этаж ${from.floor}: ни один серый узел не «видит» точку ${which}. Поставьте серый узел в коридоре прямо у этого маркера (он подсвечен красным шаром).`;
-            } else {
-              hint.textContent = grid
-                ? `Внутри «${b.name}», этаж ${from.floor}: путь не найден — нарисована прямая. Подвиньте точки в коридор.`
-                : `Внутри «${b.name}», этаж ${from.floor}: откройте этаж в селекторе для маршрута по коридорам (сейчас прямая).`;
-            }
-          }
-        } else {
-          const sFrom = findStairsRoom(b, from.floor);
-          const sTo = findStairsRoom(b, to.floor);
-          const localStA = sFrom?.local || from.room.local;
-          const localStB = sTo?.local || to.room.local;
-          const wA = worldFromFloorLocal(b, from.floor, from.room.local);
-          const wStA = worldFromFloorLocal(b, from.floor, localStA);
-          const wStB = worldFromFloorLocal(b, to.floor, localStB);
-          const wB = worldFromFloorLocal(b, to.floor, to.room.local);
-          addLine3D([wA, wStA]);
-          addLine3D([wStA, wStB]);
-          addVerticalArrowIndicator(wStA.clone().lerp(wStB, 0.5), to.floor > from.floor);
-          addLine3D([wStB, wB]);
-          hint.textContent =
-            to.floor > from.floor
-              ? `Разные этажи: маршрут к лестнице, подъём (стрелка), затем к цели. Линии в 3D над схемой.`
-              : `Разные этажи: маршрут к лестнице, спуск, затем к цели.`;
-        }
-      } else {
+      // ---- Между корпусами: прямая по кампусу (как раньше).
+      if (from.buildingId !== to.buildingId) {
         const bA = buildingDataById.get(from.buildingId);
         const bB = buildingDataById.get(to.buildingId);
         const pA = new THREE.Vector3(bA.entranceWorld.x, bA.entranceWorld.y, bA.entranceWorld.z);
         const pB = new THREE.Vector3(bB.entranceWorld.x, bB.entranceWorld.y, bB.entranceWorld.z);
         addLine3D([pA, pB]);
         hint.textContent = `Между корпусами: зелёная линия по кампусу от входа к входу. Внутри зданий используйте схемы этажей.`;
+        ui.appendChild(hint);
+        return;
+      }
+
+      const b = buildingDataById.get(from.buildingId);
+      syncFloorRouteGroupPosition(b);
+
+      // ---- Один этаж.
+      if (from.floor === to.floor) {
+        const r = buildOnFloorRoute(b, from.floor, from.room, to.room);
+        // Рисуем в 3D, чтобы маршрут был виден даже если в селекторе открыт другой этаж.
+        const worldPts = r.points.map((p) => worldFromFloorLocal(b, from.floor, p));
+        addLine3D(worldPts);
+        if (r.missingFor === 'hall') {
+          hint.textContent = `«${b.name}», этаж ${from.floor}: на этом этаже не отмечен Холл (тип «Холл»). Поставьте точку «Холл» — это начало всех маршрутов этажа.`;
+        } else if (r.missingFor === 'from') {
+          hint.textContent = `«${b.name}», этаж ${from.floor}: для точки «${from.room.label}» не нарисован путь от Холла. Откройте её в разметке и нарисуйте ломаную «Путь от Холла».`;
+        } else if (r.missingFor === 'to') {
+          hint.textContent = `«${b.name}», этаж ${from.floor}: для точки «${to.room.label}» не нарисован путь от Холла. Откройте её в разметке и нарисуйте ломаную «Путь от Холла».`;
+        } else {
+          hint.textContent = `«${b.name}», этаж ${from.floor}: маршрут «${from.room.label}» → Холл → «${to.room.label}» (${r.points.length - 1} сегмент(ов)).`;
+        }
+        ui.appendChild(hint);
+        return;
+      }
+
+      // ---- Разные этажи: на каждом этаже идём через свой Холл к лестнице.
+      const sFrom = findStairsRoom(b, from.floor);
+      const sTo = findStairsRoom(b, to.floor);
+      if (!sFrom || !sTo) {
+        // Нет лестницы на одном из этажей — рисуем прямую в 3D и сообщаем.
+        const wA = worldFromFloorLocal(b, from.floor, from.room.local);
+        const wB = worldFromFloorLocal(b, to.floor, to.room.local);
+        addLine3D([wA, wB]);
+        hint.textContent = `«${b.name}»: на этаже ${(!sFrom ? from.floor : to.floor)} нет точки «Лестница». Поставьте её, чтобы строить межэтажные маршруты.`;
+        ui.appendChild(hint);
+        return;
+      }
+      const rA = buildOnFloorRoute(b, from.floor, from.room, sFrom);
+      const rB = buildOnFloorRoute(b, to.floor, sTo, to.room);
+      const aWorld = rA.points.map((p) => worldFromFloorLocal(b, from.floor, p));
+      const bWorld = rB.points.map((p) => worldFromFloorLocal(b, to.floor, p));
+      addLine3D(aWorld);
+      const stairWorldA = aWorld[aWorld.length - 1];
+      const stairWorldB = bWorld[0];
+      addLine3D([stairWorldA, stairWorldB]);
+      addVerticalArrowIndicator(stairWorldA.clone().lerp(stairWorldB, 0.5), to.floor > from.floor);
+      addLine3D(bWorld);
+
+      const issues = [];
+      if (rA.missingFor === 'hall') issues.push(`на этаже ${from.floor} нет Холла`);
+      if (rA.missingFor === 'from') issues.push(`для «${from.room.label}» нет пути от Холла`);
+      if (rB.missingFor === 'hall') issues.push(`на этаже ${to.floor} нет Холла`);
+      if (rB.missingFor === 'to') issues.push(`для «${to.room.label}» нет пути от Холла`);
+      if (issues.length) {
+        hint.textContent = `«${b.name}»: маршрут с пропусками — ${issues.join('; ')}. Дорисуйте недостающие ломаные.`;
+      } else {
+        hint.textContent =
+          to.floor > from.floor
+            ? `«${b.name}»: ${from.floor}-й → лестница → подъём → ${to.floor}-й.`
+            : `«${b.name}»: ${from.floor}-й → лестница → спуск → ${to.floor}-й.`;
       }
       ui.appendChild(hint);
     }
@@ -3154,11 +2583,20 @@
     const roomMarkerGroup = new THREE.Group();
     scene.add(roomMarkerGroup);
 
+    // Отдельная группа для предпросмотра редактируемой ломаной «Холл → точка».
+    const pathDrawingPreviewGroup = new THREE.Group();
+    scene.add(pathDrawingPreviewGroup);
+
     let roomMarkupMode = false;
     let selectedRoomMarkupId = null;
     let draggingRoomMarkupId = null;
     let roomDragMoved = false;
     let roomDragPointerId = null;
+
+    // Режим рисования ломаной от Холла до выбранной точки.
+    let pathDrawingMode = false;
+    let pathDrawingBuffer = []; // Array<{x, z}> — промежуточные точки (без самого Холла и без целевой точки)
+    let pathDrawingTargetId = null; // id точки, для которой рисуем
 
     function roomMarkupStorageKey() {
       return MODEL_CONFIG.ROOM_MARKUP_STORAGE_KEY || 'lsu-dal-campus-nav-room-markup-v1';
@@ -3175,13 +2613,22 @@
         return null;
       }
       // kind хранится явно. Миграция со старого формата: isStairs → 'stairs',
-      // label содержит «холл» → 'hall', иначе 'room'. Раз сохранив, дальше lable не управляет типом.
-      // 'waypoint' — служебный узел коридора (для построения маршрутов через стены).
+      // label содержит «холл» → 'hall', иначе 'room'.
+      // Старые 'waypoint' (узлы коридора) — выкидываем: новая система маршрутов их не использует.
       let kind = String(r.kind || '').trim().toLowerCase();
-      if (kind !== 'room' && kind !== 'hall' && kind !== 'stairs' && kind !== 'waypoint') {
+      if (kind === 'waypoint') return null;
+      if (kind !== 'room' && kind !== 'hall' && kind !== 'stairs' && kind !== 'corridor') {
         if (r.isStairs === true) kind = 'stairs';
         else if (label.toLowerCase().includes('холл')) kind = 'hall';
         else kind = 'room';
+      }
+      // corridorPath — ломаная «Холл этажа → эта точка» в локальных XZ координатах плана.
+      // Используется в новой ручной системе маршрутов.
+      let corridorPath = [];
+      if (Array.isArray(r.corridorPath)) {
+        corridorPath = r.corridorPath
+          .map((p) => ({ x: Number(p?.x), z: Number(p?.z) }))
+          .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
       }
       return {
         id,
@@ -3189,11 +2636,13 @@
         floor: Math.max(1, Math.round(floor)),
         local: { x: lx, z: lz },
         kind,
-        isStairs: kind === 'stairs'
+        isStairs: kind === 'stairs',
+        corridorPath
       };
     }
 
     function applyPersistedRoomMarkup() {
+      let migrated = false;
       try {
         const raw = localStorage.getItem(roomMarkupStorageKey());
         if (!raw) return;
@@ -3202,11 +2651,22 @@
         for (const b of MODEL_CONFIG.buildings) {
           const list = parsed[b.id];
           if (!Array.isArray(list)) continue;
+          const before = list.length;
           const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
+          if (normalized.length !== before) migrated = true;
           if (normalized.length) b.rooms = normalized;
+          else if (before > 0) b.rooms = []; // все были waypoints — обнуляем
         }
       } catch (err) {
         console.warn('[LSU Nav] Не удалось прочитать разметку аудиторий из localStorage', err);
+      }
+      // Если что-то отфильтровали (например, старые waypoints удаляются новой системой),
+      // сразу перезапишем storage, чтобы мусор не оставался.
+      if (migrated) {
+        try {
+          savePersistedRoomMarkup();
+          console.log('[LSU Nav] Разметка аудиторий мигрирована: устаревшие записи удалены.');
+        } catch (_) {}
       }
     }
 
@@ -3222,7 +2682,10 @@
             floor: r.floor,
             local: { x: r.local.x, z: r.local.z },
             kind: r.kind || (r.isStairs ? 'stairs' : 'room'),
-            ...(r.isStairs ? { isStairs: true } : {})
+            ...(r.isStairs ? { isStairs: true } : {}),
+            ...(Array.isArray(r.corridorPath) && r.corridorPath.length
+              ? { corridorPath: r.corridorPath.map((p) => ({ x: p.x, z: p.z })) }
+              : {})
           }));
       }
       try {
@@ -3242,7 +2705,7 @@
 
     function roomKindOf(r) {
       const k = String(r?.kind || '').toLowerCase();
-      if (k === 'stairs' || k === 'hall' || k === 'room' || k === 'waypoint') return k;
+      if (k === 'stairs' || k === 'hall' || k === 'room' || k === 'corridor') return k;
       if (r?.isStairs) return 'stairs';
       const low = String(r?.label || '').toLowerCase();
       if (low.includes('холл')) return 'hall';
@@ -3252,7 +2715,7 @@
     function roomColorForKind(kind) {
       if (kind === 'stairs') return 0xf59e0b;
       if (kind === 'hall') return 0x67e8f9;
-      if (kind === 'waypoint') return 0x94a3b8;
+      if (kind === 'corridor') return 0x94a3b8; // серый — скрытый якорь для рисования
       return 0x34d399;
     }
 
@@ -3338,14 +2801,16 @@
       const floorNow = currentEditorFloor();
       // Сводка: сколько маркеров каких типов на текущем этаже — сразу видно,
       // не «забыл ли я нажать Сохранить точку» при смене типа.
-      const counts = { room: 0, hall: 0, stairs: 0, waypoint: 0 };
+      const counts = { room: 0, hall: 0, stairs: 0, corridor: 0 };
+      let withPath = 0;
       for (const r of b.rooms || []) {
         if (Number(r.floor) !== Number(floorNow)) continue;
         const k = roomKindOf(r);
         if (counts[k] !== undefined) counts[k]++;
+        if (Array.isArray(r.corridorPath) && r.corridorPath.length > 0) withPath++;
       }
       console.log(
-        `[Markup] ${b.id} эт.${floorNow}: room=${counts.room} hall=${counts.hall} stairs=${counts.stairs} waypoint=${counts.waypoint}`
+        `[Markup] ${b.id} эт.${floorNow}: room=${counts.room} hall=${counts.hall} stairs=${counts.stairs} corridor=${counts.corridor} (с маршрутом от Холла: ${withPath})`
       );
       // Показываем маркеры только текущего этажа: для других этажей координаты «уплывают»,
       // т.к. рассчитываются по упрощённой формуле без rotation/mirror/scale текущего плана.
@@ -3354,15 +2819,19 @@
         if (Number(r.floor) !== Number(floorNow)) continue;
         if (!r.local || !Number.isFinite(Number(r.local.x)) || !Number.isFinite(Number(r.local.z))) continue;
         const kind = roomKindOf(r);
-        const isWp = kind === 'waypoint';
-        const geom = new THREE.SphereGeometry(isWp ? 0.08 : 0.14, 10, 10);
+        const isCorridor = kind === 'corridor';
+        // Узлы коридора — маленькие и полупрозрачные, чтобы не загромождать вид.
+        const geom = new THREE.SphereGeometry(isCorridor ? 0.08 : 0.14, 10, 10);
         const isSelected = selectedRoomMarkupId === r.id;
+        const hasPath = Array.isArray(r.corridorPath) && r.corridorPath.length > 0;
         const mat = new THREE.MeshStandardMaterial({
           color: roomColorForKind(kind),
           transparent: true,
-          opacity: isWp ? 0.55 : 0.95,
-          emissive: isSelected ? 0x1d4ed8 : 0x000000,
-          emissiveIntensity: isSelected ? 0.75 : 0
+          opacity: isCorridor ? 0.6 : 0.95,
+          // Зелёное свечение, если у точки уже нарисован путь от Холла — глаз сразу ловит
+          // какие точки готовы для маршрутов, а какие ещё ждут разметки.
+          emissive: isSelected ? 0x1d4ed8 : (hasPath && !isCorridor ? 0x14532d : 0x000000),
+          emissiveIntensity: isSelected ? 0.75 : (hasPath && !isCorridor ? 0.5 : 0)
         });
         const marker = new THREE.Mesh(geom, mat);
         marker.castShadow = false;
@@ -3371,6 +2840,33 @@
         marker.userData.roomMarkupId = r.id;
         marker.userData.roomMarkupFloor = r.floor || 1;
         roomMarkerGroup.add(marker);
+      }
+
+      // Рисуем сохранённые ломаные «Холл этажа → точка» как тонкие зелёные линии,
+      // чтобы при разметке было видно, какие маршруты уже есть. Для corridor-точек
+      // ломаную не показываем — у них этого пути не бывает.
+      for (const r of b.rooms || []) {
+        if (Number(r.floor) !== Number(floorNow)) continue;
+        if (roomKindOf(r) === 'corridor') continue;
+        if (!Array.isArray(r.corridorPath) || r.corridorPath.length === 0) continue;
+        const hall = findHallRoom(b, floorNow);
+        if (!hall) continue;
+        const localPts = [
+          { x: hall.local.x, z: hall.local.z },
+          ...r.corridorPath.map((p) => ({ x: Number(p.x), z: Number(p.z) })),
+          { x: r.local.x, z: r.local.z }
+        ];
+        const worldPts = localPts.map((p) => worldFromFloorLocal(b, floorNow, p));
+        const geo = new THREE.BufferGeometry().setFromPoints(worldPts);
+        const mat = new THREE.LineBasicMaterial({
+          color: selectedRoomMarkupId === r.id ? 0xfbbf24 : 0x16a34a,
+          transparent: true,
+          opacity: 0.65,
+          depthTest: false
+        });
+        const line = new THREE.Line(geo, mat);
+        line.renderOrder = 998;
+        roomMarkerGroup.add(line);
       }
     }
 
@@ -3385,9 +2881,15 @@
     function refreshRoomMarkupUi() {
       const panel = document.getElementById('room-editor-panel');
       panel.hidden = !roomMarkupMode;
+      // При смене корпуса/этажа/выбранной точки прерываем рисование пути,
+      // чтобы не оставить «висящий» буфер у несуществующей цели.
+      if (pathDrawingMode && pathDrawingTargetId !== selectedRoomMarkupId) {
+        cancelPathDrawing();
+      }
       refreshRoomEditorSelect();
       fillRoomEditorFields();
       refreshRoomMarkupVisuals();
+      refreshPathEditorUi();
     }
 
     function makeRoomId(bid) {
@@ -3401,14 +2903,17 @@
       if (!b) return;
       const floor = currentEditorFloor();
       if (!Array.isArray(b.rooms)) b.rooms = [];
-      const asWaypoint = document.getElementById('toggle-room-as-waypoint')?.checked === true;
-      const wpCount = (b.rooms || []).filter((r) => roomKindOf(r) === 'waypoint').length;
+      const asCorridor = document.getElementById('toggle-add-as-corridor')?.checked === true;
+      const corridorCount = (b.rooms || []).filter(
+        (r) => roomKindOf(r) === 'corridor' && Number(r.floor) === Number(floor)
+      ).length;
       const room = {
         id: makeRoomId(b.id),
-        label: asWaypoint ? `wp-${wpCount + 1}` : `Новая точка ${b.rooms.length + 1}`,
+        label: asCorridor ? `узел-${corridorCount + 1}` : `Новая точка ${b.rooms.length + 1}`,
         floor,
-        kind: asWaypoint ? 'waypoint' : 'room',
+        kind: asCorridor ? 'corridor' : 'room',
         isStairs: false,
+        corridorPath: [],
         local: {
           x: Number(local.x.toFixed(2)),
           z: Number(local.z.toFixed(2))
@@ -3420,7 +2925,9 @@
       populateRouteSelects();
       savePersistedRoomMarkup();
       refreshRoomMarkupUi();
-      appendInfo(`Добавлена точка «${room.label}» в ${b.name}, этаж ${floor}.`, false);
+      if (!asCorridor) {
+        appendInfo(`Добавлена точка «${room.label}» в ${b.name}, этаж ${floor}.`, false);
+      }
     }
 
     function updateSelectedMarkupRoomFromFields() {
@@ -3436,7 +2943,7 @@
       }
       r.label = label;
       r.floor = Number.isFinite(floorVal) ? Math.max(1, floorVal) : 1;
-      r.kind = ['hall', 'stairs', 'room', 'waypoint'].includes(kind) ? kind : 'room';
+      r.kind = ['hall', 'stairs', 'room', 'corridor'].includes(kind) ? kind : 'room';
       r.isStairs = r.kind === 'stairs';
       indexRooms();
       populateRouteSelects();
@@ -3458,6 +2965,219 @@
       appendInfo(`Точка «${r.label}» удалена.`, false);
     }
 
+    /* ====== Режим рисования ломаной «Холл этажа → выбранная точка» ====== */
+
+    function clearPathDrawingPreview() {
+      while (pathDrawingPreviewGroup.children.length) {
+        const c = pathDrawingPreviewGroup.children[0];
+        pathDrawingPreviewGroup.remove(c);
+        disposeSubtree(c);
+      }
+    }
+
+    function refreshPathDrawingPreview() {
+      clearPathDrawingPreview();
+      if (!pathDrawingMode) return;
+      const b = currentEditorBuilding();
+      const r = selectedMarkupRoom();
+      if (!b || !r || !currentFloorMesh) return;
+      const floor = currentEditorFloor();
+      const hall = findHallRoom(b, floor);
+      if (!hall) return;
+
+      const pts = [
+        { x: hall.local.x, z: hall.local.z },
+        ...pathDrawingBuffer,
+        { x: r.local.x, z: r.local.z }
+      ];
+      const worldPts = pts.map((p) => worldFromFloorLocal(b, floor, p));
+      const geo = new THREE.BufferGeometry().setFromPoints(worldPts);
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xfbbf24,
+        transparent: true,
+        opacity: 0.95,
+        depthTest: false
+      });
+      const line = new THREE.Line(geo, mat);
+      line.renderOrder = 999;
+      pathDrawingPreviewGroup.add(line);
+
+      // Маленькие сферки в каждой добавленной точке (без хвостовых: Холла и цели).
+      for (const p of pathDrawingBuffer) {
+        const w = worldFromFloorLocal(b, floor, p);
+        const s = new THREE.Mesh(
+          new THREE.SphereGeometry(0.1, 10, 10),
+          new THREE.MeshBasicMaterial({ color: 0xfbbf24, depthTest: false })
+        );
+        s.position.copy(w);
+        s.renderOrder = 999;
+        pathDrawingPreviewGroup.add(s);
+      }
+    }
+
+    function refreshPathEditorUi() {
+      const panel = document.getElementById('path-editor-panel');
+      if (!panel) return;
+      const r = selectedMarkupRoom();
+      const b = currentEditorBuilding();
+      const floor = currentEditorFloor();
+      const hall = b ? findHallRoom(b, floor) : null;
+      const isHall = r && roomKindOf(r) === 'hall';
+      const isCorridor = r && roomKindOf(r) === 'corridor';
+
+      // Панель видна когда выбрана точка-цель: НЕ Холл (Холл — начало маршрутов)
+      // и НЕ узел коридора (он сам по себе якорь, маршрут к нему не нужен).
+      panel.hidden = !roomMarkupMode || !r || isHall || isCorridor;
+      if (panel.hidden) return;
+
+      const status = document.getElementById('path-editor-status');
+      const hint = document.getElementById('path-editor-hint');
+      const btnDraw = document.getElementById('btn-path-draw');
+      const btnFinish = document.getElementById('btn-path-finish');
+      const btnUndo = document.getElementById('btn-path-undo');
+      const btnCancel = document.getElementById('btn-path-cancel');
+      const btnDelete = document.getElementById('btn-path-delete');
+
+      const existing = getCorridorPath(r);
+      const noHall = !hall;
+
+      btnDraw.hidden = pathDrawingMode;
+      btnFinish.hidden = !pathDrawingMode;
+      btnUndo.hidden = !pathDrawingMode;
+      btnCancel.hidden = !pathDrawingMode;
+      btnDelete.hidden = pathDrawingMode || existing.length === 0;
+      btnDraw.disabled = noHall;
+
+      if (noHall) {
+        status.textContent = 'Маршрут от Холла: невозможно — на этаже не отмечен Холл';
+        hint.textContent = 'Сначала поставьте на этом этаже точку с типом «Холл», затем рисуйте маршруты.';
+        return;
+      }
+      if (pathDrawingMode) {
+        status.textContent = `Рисуем маршрут «${hall.label}» → «${r.label}»: точек в пути ${pathDrawingBuffer.length}`;
+        hint.textContent = 'Кликайте по плану, добавляя промежуточные точки маршрута. «Готово» сохранит ломаную.';
+      } else if (existing.length) {
+        status.textContent = `Маршрут от Холла нарисован: ${existing.length} промежуточных точек`;
+        hint.textContent = 'Можно перерисовать (стартует с пустого пути) или удалить существующий.';
+      } else {
+        status.textContent = 'Маршрут от Холла: не нарисован';
+        hint.textContent = `Нажмите «Рисовать», затем кликайте по плану от «${hall.label}» до «${r.label}».`;
+      }
+    }
+
+    function startPathDrawing() {
+      const r = selectedMarkupRoom();
+      const b = currentEditorBuilding();
+      if (!r || !b) return;
+      const hall = findHallRoom(b, currentEditorFloor());
+      if (!hall) {
+        appendInfo('Сначала поставьте точку с типом «Холл» на этом этаже.', true);
+        return;
+      }
+      const k = roomKindOf(r);
+      if (k === 'hall') {
+        appendInfo('Холл — это начало маршрутов, для него ломаная не нужна.', true);
+        return;
+      }
+      if (k === 'corridor') {
+        appendInfo('Узел коридора — сам якорь, маршрут к нему рисовать не нужно.', true);
+        return;
+      }
+      pathDrawingMode = true;
+      pathDrawingBuffer = [];
+      pathDrawingTargetId = r.id;
+      refreshPathDrawingPreview();
+      refreshPathEditorUi();
+    }
+
+    /**
+     * При клике в режиме рисования снапим к ближайшей точке разметки в радиусе snapMeters.
+     * Это даёт чистые повороты на одних и тех же узлах коридора у разных маршрутов.
+     * Снапим к ЛЮБЫМ типам (Холл, Лестница, Узел коридора, Аудитория) кроме самой цели,
+     * для которой рисуем путь — иначе путь схлопнется в одну точку.
+     */
+    function snapPathClickToNearestMarker(local, snapMeters = 1.0) {
+      const b = currentEditorBuilding();
+      if (!b) return local;
+      const floor = currentEditorFloor();
+      // Переводим snapMeters в локальные единицы. У нас floor plan масштабируется
+      // через MODEL_CONFIG.FLOOR_PLAN_SCALE (~ метры/локальную единицу) и поверх
+      // floorPlanMatchBuildingFootprint может растянуть scale ещё. Аппроксимируем
+      // через currentFloorMesh.matrixWorld, как при растеризации сетки.
+      let localToWorld = MODEL_CONFIG.FLOOR_PLAN_SCALE || 1;
+      if (currentFloorMesh) {
+        const o0 = new THREE.Vector3().setFromMatrixPosition(currentFloorMesh.matrixWorld);
+        const oX = new THREE.Vector3(1, 0, 0).applyMatrix4(currentFloorMesh.matrixWorld);
+        const oZ = new THREE.Vector3(0, 0, 1).applyMatrix4(currentFloorMesh.matrixWorld);
+        const sx = o0.distanceTo(oX) || 1;
+        const sz = o0.distanceTo(oZ) || 1;
+        localToWorld = (sx + sz) * 0.5;
+      }
+      const snapLocal = snapMeters / localToWorld;
+      const snapLocalSq = snapLocal * snapLocal;
+
+      let bestId = null;
+      let best = Infinity;
+      let bestPt = null;
+      for (const r of b.rooms || []) {
+        if (Number(r.floor) !== Number(floor)) continue;
+        if (r.id === pathDrawingTargetId) continue;
+        const dx = r.local.x - local.x;
+        const dz = r.local.z - local.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < snapLocalSq && d2 < best) {
+          best = d2;
+          bestId = r.id;
+          bestPt = { x: r.local.x, z: r.local.z };
+        }
+      }
+      return bestPt
+        ? { ...bestPt, _snappedTo: bestId, _snapDistMeters: Math.sqrt(best) * localToWorld }
+        : local;
+    }
+
+    function finishPathDrawing() {
+      const r = selectedMarkupRoom();
+      if (!r) {
+        cancelPathDrawing();
+        return;
+      }
+      r.corridorPath = pathDrawingBuffer.map((p) => ({ x: p.x, z: p.z }));
+      pathDrawingMode = false;
+      pathDrawingBuffer = [];
+      pathDrawingTargetId = null;
+      savePersistedRoomMarkup();
+      refreshPathDrawingPreview();
+      refreshRoomMarkupVisuals();
+      refreshPathEditorUi();
+      appendInfo(`Маршрут до «${r.label}» сохранён (${r.corridorPath.length} точек).`, false);
+    }
+
+    function undoLastPathPoint() {
+      if (!pathDrawingMode || !pathDrawingBuffer.length) return;
+      pathDrawingBuffer.pop();
+      refreshPathDrawingPreview();
+      refreshPathEditorUi();
+    }
+
+    function cancelPathDrawing() {
+      pathDrawingMode = false;
+      pathDrawingBuffer = [];
+      pathDrawingTargetId = null;
+      refreshPathDrawingPreview();
+      refreshPathEditorUi();
+    }
+
+    function deleteCorridorPathOfSelected() {
+      const r = selectedMarkupRoom();
+      if (!r) return;
+      r.corridorPath = [];
+      savePersistedRoomMarkup();
+      refreshRoomMarkupVisuals();
+      refreshPathEditorUi();
+      appendInfo(`Маршрут от Холла до «${r.label}» удалён.`, false);
+    }
+
     function exportRoomsOfCurrentBuilding() {
       const b = currentEditorBuilding();
       if (!b) return;
@@ -3470,7 +3190,10 @@
           floor: r.floor,
           local: { x: r.local.x, z: r.local.z },
           kind: r.kind || (r.isStairs ? 'stairs' : 'room'),
-          ...(r.isStairs ? { isStairs: true } : {})
+          ...(r.isStairs ? { isStairs: true } : {}),
+          ...(Array.isArray(r.corridorPath) && r.corridorPath.length
+            ? { corridorPath: r.corridorPath.map((p) => ({ x: p.x, z: p.z })) }
+            : {})
         }))
       };
       const text = JSON.stringify(payload, null, 2);
@@ -3555,6 +3278,43 @@
 
     function tryHandleRoomMarkupClick(ev) {
       if (!roomMarkupMode) return false;
+
+      // В режиме рисования пути от Холла клики НЕ создают точки и НЕ выбирают маркеры —
+      // только добавляют узлы в редактируемую ломаную.
+      if (pathDrawingMode) {
+        const b = currentEditorBuilding();
+        if (!b || !currentFloorMesh) {
+          appendInfo('Чтобы рисовать путь, дождитесь загрузки схемы этажа.', true);
+          return true;
+        }
+        const plane = floorPlanWorldPlane();
+        if (!plane) return true;
+        const worldPoint = new THREE.Vector3();
+        if (!raycaster.ray.intersectPlane(plane, worldPoint)) return true;
+        const local = currentFloorMesh.worldToLocal(worldPoint.clone());
+        // Snap к ближайшему якорю (Холл, Лестница, Узел коридора, Аудитория)
+        // в радиусе ~1 м реального мира. Ставит чистые повороты у нескольких маршрутов.
+        const snapped = snapPathClickToNearestMarker({ x: local.x, z: local.z }, 1.0);
+        const px = Number((snapped.x).toFixed(2));
+        const pz = Number((snapped.z).toFixed(2));
+        // Не добавляем дубль подряд (защита от двойного клика на тот же якорь).
+        const last = pathDrawingBuffer[pathDrawingBuffer.length - 1];
+        if (last && Math.hypot(last.x - px, last.z - pz) < 1e-3) {
+          appendInfo('Эта точка уже добавлена — пропускаю дубликат.', false);
+        } else {
+          pathDrawingBuffer.push({ x: px, z: pz });
+          if (snapped._snappedTo) {
+            appendInfo(
+              `Snap к узлу (${snapped._snapDistMeters.toFixed(2)} м).`,
+              false
+            );
+          }
+        }
+        refreshPathDrawingPreview();
+        refreshPathEditorUi();
+        return true;
+      }
+
       const markerHits = raycaster.intersectObjects(roomMarkerGroup.children, true);
       if (markerHits.length) {
         let o = markerHits[0].object;
@@ -3647,8 +3407,8 @@
       fromSel.innerHTML = '';
       toSel.innerHTML = '';
       roomIndex.forEach((data, id) => {
-        // waypoints — служебные узлы, не должны быть выбираемой целью маршрута
-        if (roomKindOf(data.room) === 'waypoint') return;
+        // Узлы коридора — скрытые якоря для рисования. В выбор маршрута их не пускаем.
+        if (roomKindOf(data.room) === 'corridor') return;
         const b = data.building;
         const text = `${b.name} — эт.${data.floor} — ${data.room.label}`;
         const o1 = new Option(text, id);
@@ -4174,10 +3934,6 @@
         return;
       }
 
-      // Свежий план — старая навигационная сетка для этого (bid, level) больше не валидна
-      // (могли измениться rotation/mirror/scale через MANUAL_BUILDINGS).
-      navGridCache.delete(navGridKey(bid, level));
-
       const url = resolveModelPath(floorDef.modelPath);
       let plan = await loadGLB(url, bid, `floor ${level}`);
       if (!plan) {
@@ -4328,7 +4084,11 @@
       // Маршрут привязан к конкретной паре точек/этажу/корпусу. При переключении
       // корпуса старая линия теряет смысл и «уезжает» с floorRouteGroup в центр нового
       // корпуса (баг с «висящей в воздухе» зелёной линией) — поэтому очищаем явно.
-      if (selectedBuildingId !== bid) clearRoute();
+      if (selectedBuildingId !== bid) {
+        clearRoute();
+        // При смене корпуса прерываем редактирование пути — буфер был для другого корпуса.
+        if (pathDrawingMode) cancelPathDrawing();
+      }
       if (selectedBuildingId && buildingMeshes.has(selectedBuildingId)) {
         highlightBuilding(buildingMeshes.get(selectedBuildingId), false);
       }
@@ -4513,6 +4273,9 @@
     document.getElementById('select-floor').addEventListener('change', () => {
       // Маршрут привязан к этажу — при смене этажа старые линии 2D/3D больше не валидны.
       clearRoute();
+      // Если рисовали путь на старом этаже — нужно отменить, т.к. координаты буфера
+      // принадлежали другому floor.
+      if (pathDrawingMode) cancelPathDrawing();
       refreshRoomMarkupUi();
       void updateFloorPlan();
     });
@@ -4541,14 +4304,20 @@
           false
         );
       } else {
+        if (pathDrawingMode) cancelPathDrawing();
         appendInfo('Режим разметки выключен.', false);
       }
       refreshRoomMarkupUi();
     });
     document.getElementById('room-edit-select').addEventListener('change', (e) => {
       selectedRoomMarkupId = e.target.value || null;
+      // При смене выбранной точки прерываем рисование пути (буфер был для другой цели).
+      if (pathDrawingMode && pathDrawingTargetId !== selectedRoomMarkupId) {
+        cancelPathDrawing();
+      }
       fillRoomEditorFields();
       refreshRoomMarkupVisuals();
+      refreshPathEditorUi();
     });
     document.getElementById('btn-room-update').addEventListener('click', () => {
       updateSelectedMarkupRoomFromFields();
@@ -4564,6 +4333,24 @@
     });
     document.getElementById('btn-room-clear-all').addEventListener('click', () => {
       clearAllRoomsOfCurrentBuilding();
+    });
+
+    document.getElementById('btn-path-draw').addEventListener('click', () => {
+      startPathDrawing();
+    });
+    document.getElementById('btn-path-finish').addEventListener('click', () => {
+      finishPathDrawing();
+    });
+    document.getElementById('btn-path-undo').addEventListener('click', () => {
+      undoLastPathPoint();
+    });
+    document.getElementById('btn-path-cancel').addEventListener('click', () => {
+      cancelPathDrawing();
+    });
+    document.getElementById('btn-path-delete').addEventListener('click', () => {
+      if (window.confirm('Удалить нарисованный маршрут от Холла до этой точки?')) {
+        deleteCorridorPathOfSelected();
+      }
     });
 
     document.getElementById('btn-reset-camera').addEventListener('click', () => {
