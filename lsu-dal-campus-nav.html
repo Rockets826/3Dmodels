@@ -543,6 +543,11 @@
               <input id="room-edit-z" type="number" step="0.01" value="0" />
             </div>
           </div>
+          <div class="field" id="room-edit-hall-wrap" style="margin:0;">
+            <label for="room-edit-hall">Привязан к Холлу</label>
+            <select id="room-edit-hall"></select>
+            <p class="mini" id="room-edit-hall-hint" style="margin:4px 0 0 0;opacity:0.8;">Если у этажа несколько Холлов (например, левое/правое крыло без перехода) — выберите Холл-источник для маршрутов этой точки.</p>
+          </div>
           <p class="mini" id="room-edit-coords" style="margin:0 0 4px 0;">Введите точные X и Z — точка переедет на них после «Сохранить точку». Уже нарисованные маршруты, проходящие через эту точку, обновятся автоматически.</p>
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-update" class="primary">Сохранить точку</button>
@@ -2508,12 +2513,35 @@
      * Маршрут между этажами = на этаже A добираемся до лестницы тем же приёмом, переходим
      * вертикально, и на этаже B от лестницы тем же приёмом до цели.
      * --------------------------------------------------------------------------------------- */
-    function findHallRoom(building, floor) {
-      return (
-        (building.rooms || []).find(
-          (r) => Number(r.floor) === Number(floor) && roomKindOf(r) === 'hall'
-        ) || null
+    function findHallsOfFloor(building, floor) {
+      return (building.rooms || []).filter(
+        (r) => Number(r.floor) === Number(floor) && roomKindOf(r) === 'hall'
       );
+    }
+
+    /** Найти Холл этажа. Если hallId задан — конкретный; иначе первый («дефолтный») холл.
+     * Несколько холлов на одном этаже поддерживаются для разделённых крыльев корпуса
+     * без перехода между ними (каждое крыло обслуживает свой Холл). */
+    function findHallRoom(building, floor, hallId) {
+      const halls = findHallsOfFloor(building, floor);
+      if (hallId) {
+        const exact = halls.find((h) => String(h.id) === String(hallId));
+        if (exact) return exact;
+      }
+      return halls[0] || null;
+    }
+
+    /** Лестница, привязанная к указанному Холлу (через .hallId). Если несколько лестниц
+     * на этаже — берём ту, у которой hallId совпадает с искомым. Если совпадений нет — fallback на первую. */
+    function findStairsRoomForHall(building, floor, hallId) {
+      const stairs = (building.rooms || []).filter(
+        (r) => Number(r.floor) === Number(floor) && r.isStairs
+      );
+      if (hallId) {
+        const exact = stairs.find((s) => String(s.hallId || '') === String(hallId));
+        if (exact) return exact;
+      }
+      return stairs[0] || null;
     }
 
     function getCorridorPath(room) {
@@ -2523,14 +2551,26 @@
         .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
     }
 
+    /** Какой Холл «обслуживает» точку r на её этаже:
+     *  если r — сам Холл, возвращаем его; иначе берём r.hallId; если он не задан —
+     *  «дефолтный» (первый) холл этажа. */
+    function resolveHallOfRoom(building, r) {
+      if (!r) return null;
+      if (roomKindOf(r) === 'hall') return r;
+      return findHallRoom(building, r.floor, r.hallId);
+    }
+
     /**
      * Собирает локальные точки маршрута from → Холл → to внутри одного этажа.
-     * Возвращает { points, hallId, missingFor: null|'from'|'to'|'hall' }.
-     * Если у точки нет corridorPath (и она не сам Холл), возвращает прямую и сообщает об этом.
+     * Возвращает { points, hallId, missingFor: null|'from'|'to'|'hall'|'differentWings' }.
+     * Если from и to привязаны к разным Холлам (разные крылья без перехода) —
+     * возвращает missingFor='differentWings' и НЕ строит ломаную.
      */
     function buildOnFloorRoute(building, floor, fromRoom, toRoom) {
-      const hall = findHallRoom(building, floor);
-      if (!hall) {
+      const fromHall = resolveHallOfRoom(building, fromRoom);
+      const toHall = resolveHallOfRoom(building, toRoom);
+      // На этаже может вообще не быть Холла.
+      if (!fromHall && !toHall) {
         return {
           points: [
             { x: fromRoom.local.x, z: fromRoom.local.z },
@@ -2539,6 +2579,16 @@
           missingFor: 'hall'
         };
       }
+      // Если точки привязаны к РАЗНЫМ Холлам этажа — это разные крылья без перехода.
+      if (fromHall && toHall && String(fromHall.id) !== String(toHall.id)) {
+        return {
+          points: [],
+          missingFor: 'differentWings',
+          fromHallLabel: fromHall.label,
+          toHallLabel: toHall.label
+        };
+      }
+      const hall = fromHall || toHall;
       const fromIsHall = String(fromRoom.id) === String(hall.id);
       const toIsHall = String(toRoom.id) === String(hall.id);
       const fromCorr = getCorridorPath(fromRoom);
@@ -2604,9 +2654,14 @@
         const r = buildOnFloorRoute(b, from.floor, from.room, to.room);
         // Рисуем в 3D, чтобы маршрут был виден даже если в селекторе открыт другой этаж.
         const worldPts = r.points.map((p) => worldFromFloorLocal(b, from.floor, p));
-        addLine3D(worldPts);
+        if (worldPts.length > 1) addLine3D(worldPts);
         if (r.missingFor === 'hall') {
           hint.textContent = `«${b.name}», этаж ${from.floor}: на этом этаже не отмечен Холл (тип «Холл»). Поставьте точку «Холл» — это начало всех маршрутов этажа.`;
+        } else if (r.missingFor === 'differentWings') {
+          hint.textContent =
+            `«${b.name}», этаж ${from.floor}: «${from.room.label}» и «${to.room.label}» относятся к разным Холлам ` +
+            `(${r.fromHallLabel || '«?»'} ↔ ${r.toHallLabel || '«?»'}) — на этом этаже нет перехода между крыльями. ` +
+            `Постройте маршрут через другой этаж, где переход существует.`;
         } else if (r.missingFor === 'from') {
           hint.textContent = `«${b.name}», этаж ${from.floor}: для точки «${from.room.label}» не нарисован путь от Холла. Откройте её в разметке и нарисуйте ломаную «Путь от Холла».`;
         } else if (r.missingFor === 'to') {
@@ -2618,19 +2673,19 @@
         return;
       }
 
-      // ---- Разные этажи: на каждом этаже идём через свой Холл к лестнице.
-      // ВАЖНО: если на любом из этажей нет Холла или Лестницы — НЕ рисуем линию-заглушку
-      // через всё здание (раньше получалась «диагональ в воздухе»). Просто показываем,
-      // что разметка на нужном этаже неполна.
-      const hallFrom = findHallRoom(b, from.floor);
-      const hallTo = findHallRoom(b, to.floor);
-      const sFrom = findStairsRoom(b, from.floor);
-      const sTo = findStairsRoom(b, to.floor);
+      // ---- Разные этажи: на каждом этаже идём через СВОЙ Холл к Лестнице.
+      // Учитываем hallId каждой точки, чтобы выбрать правильную «копию» Холла/Лестницы
+      // в случае разделённых крыльев. Если на любом из этажей нет Холла/Лестницы для
+      // нужного крыла — НЕ рисуем линию-заглушку, просто объясняем, чего не хватает.
+      const hallFrom = resolveHallOfRoom(b, from.room);
+      const hallTo = resolveHallOfRoom(b, to.room);
+      const sFrom = findStairsRoomForHall(b, from.floor, hallFrom?.id);
+      const sTo = findStairsRoomForHall(b, to.floor, hallTo?.id);
       const missing = [];
-      if (!hallFrom) missing.push(`на этаже ${from.floor} нет Холла`);
-      if (!sFrom) missing.push(`на этаже ${from.floor} нет Лестницы`);
-      if (!hallTo) missing.push(`на этаже ${to.floor} нет Холла`);
-      if (!sTo) missing.push(`на этаже ${to.floor} нет Лестницы`);
+      if (!hallFrom) missing.push(`на этаже ${from.floor} нет Холла (для крыла «${from.room.label}»)`);
+      if (!sFrom) missing.push(`на этаже ${from.floor} нет Лестницы (для того же Холла, что у «${from.room.label}»)`);
+      if (!hallTo) missing.push(`на этаже ${to.floor} нет Холла (для крыла «${to.room.label}»)`);
+      if (!sTo) missing.push(`на этаже ${to.floor} нет Лестницы (для того же Холла, что у «${to.room.label}»)`);
       if (missing.length) {
         hint.textContent =
           `«${b.name}»: межэтажный маршрут невозможен — ${missing.join('; ')}. ` +
@@ -2737,6 +2792,12 @@
           .map((p) => ({ x: Number(p?.x), z: Number(p?.z) }))
           .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
       }
+      // hallId — id Холла-источника, от которого нарисован corridorPath.
+      // Поддерживает несколько Холлов на этаже (например, левое/правое крыло корпуса
+      // без перехода между ними). Если null/undefined — используем «дефолтный» холл
+      // этажа (первый найденный), сохраняя совместимость со старой разметкой.
+      const hallIdRaw = r.hallId != null ? String(r.hallId).trim() : '';
+      const hallId = hallIdRaw || null;
       return {
         id,
         label,
@@ -2744,6 +2805,7 @@
         local: { x: lx, z: lz },
         kind,
         isStairs: kind === 'stairs',
+        hallId,
         corridorPath
       };
     }
@@ -2793,6 +2855,7 @@
             local: { x: r.local.x, z: r.local.z },
             kind: r.kind || (r.isStairs ? 'stairs' : 'room'),
             ...(r.isStairs ? { isStairs: true } : {}),
+            ...(r.hallId ? { hallId: r.hallId } : {}),
             ...(Array.isArray(r.corridorPath) && r.corridorPath.length
               ? { corridorPath: r.corridorPath.map((p) => ({ x: p.x, z: p.z })) }
               : {})
@@ -2887,6 +2950,9 @@
       const type = document.getElementById('room-edit-type');
       const xInp = document.getElementById('room-edit-x');
       const zInp = document.getElementById('room-edit-z');
+      const hallSel = document.getElementById('room-edit-hall');
+      const hallWrap = document.getElementById('room-edit-hall-wrap');
+      const hallHint = document.getElementById('room-edit-hall-hint');
       const btnUpd = document.getElementById('btn-room-update');
       const btnDel = document.getElementById('btn-room-delete');
 
@@ -2896,8 +2962,38 @@
       type.disabled = !enabled;
       if (xInp) xInp.disabled = !enabled;
       if (zInp) zInp.disabled = !enabled;
+      if (hallSel) hallSel.disabled = !enabled;
       btnUpd.disabled = !enabled;
       btnDel.disabled = !enabled;
+
+      // Заполняем селектор «Привязан к Холлу» для текущего корпуса/этажа выбранной точки.
+      if (hallSel && hallWrap) {
+        hallSel.innerHTML = '';
+        if (enabled) {
+          const floorOfPoint = Number(r.floor) || 1;
+          const halls = findHallsOfFloor(b, floorOfPoint).filter((h) => h.id !== r.id);
+          const isHallItself = roomKindOf(r) === 'hall';
+          if (isHallItself) {
+            hallWrap.hidden = true;
+          } else {
+            hallWrap.hidden = false;
+            hallSel.add(new Option('— автоматически (первый Холл этажа) —', ''));
+            for (const h of halls) {
+              hallSel.add(new Option(`${h.label} (x=${(h.local?.x ?? 0).toFixed(1)}, z=${(h.local?.z ?? 0).toFixed(1)})`, h.id));
+            }
+            hallSel.value = r.hallId && halls.some((h) => h.id === r.hallId) ? r.hallId : '';
+            if (hallHint) {
+              hallHint.textContent = halls.length > 1
+                ? `На этом этаже несколько Холлов (${halls.length}). Выберите тот, что обслуживает эту точку — это будет начало её маршрута.`
+                : (halls.length === 1
+                  ? `На этом этаже только один Холл — он используется автоматически. Селектор пригодится, когда добавите ещё один Холл для другого крыла.`
+                  : `На этом этаже пока нет Холлов. Сначала поставьте точку типа «Холл».`);
+            }
+          }
+        } else {
+          hallWrap.hidden = true;
+        }
+      }
 
       if (!enabled) {
         label.value = '';
@@ -2970,7 +3066,8 @@
         if (Number(r.floor) !== Number(floorNow)) continue;
         if (roomKindOf(r) === 'corridor') continue;
         if (!Array.isArray(r.corridorPath) || r.corridorPath.length === 0) continue;
-        const hall = findHallRoom(b, floorNow);
+        // Каждая точка визуально подключается к СВОЕМУ Холлу (через hallId).
+        const hall = resolveHallOfRoom(b, r) || findHallRoom(b, floorNow);
         if (!hall) continue;
         const localPts = [
           { x: hall.local.x, z: hall.local.z },
@@ -3079,6 +3176,15 @@
       r.kind = ['hall', 'stairs', 'room', 'corridor'].includes(kind) ? kind : 'room';
       r.isStairs = r.kind === 'stairs';
       r.local = { x: newX, z: newZ };
+      // Привязка к Холлу: для самого Холла — null; иначе берём из селектора.
+      // Пустая строка трактуется как «автоматически» (первый Холл этажа).
+      if (r.kind === 'hall') {
+        r.hallId = null;
+      } else {
+        const hallSel = document.getElementById('room-edit-hall');
+        const hidRaw = hallSel ? String(hallSel.value || '').trim() : '';
+        r.hallId = hidRaw || null;
+      }
 
       // Если координаты реально поменялись и этаж не сменили — синхронно сдвинем
       // те точки в corridorPath других аудиторий этого корпуса/этажа, которые
@@ -3148,7 +3254,8 @@
       const r = selectedMarkupRoom();
       if (!b || !r || !currentFloorMesh) return;
       const floor = currentEditorFloor();
-      const hall = findHallRoom(b, floor);
+      // Используем Холл, к которому привязана точка (поддержка нескольких Холлов).
+      const hall = resolveHallOfRoom(b, r) || findHallRoom(b, floor);
       if (!hall) return;
 
       const pts = [
@@ -3187,7 +3294,10 @@
       const r = selectedMarkupRoom();
       const b = currentEditorBuilding();
       const floor = currentEditorFloor();
-      const hall = b ? findHallRoom(b, floor) : null;
+      // Для выбранной точки берём Холл, к которому она привязана через hallId,
+      // с фолбэком на первый Холл этажа. Так одна аудитория обслуживается одним
+      // конкретным Холлом, даже если на этаже их несколько.
+      const hall = r ? (resolveHallOfRoom(b, r) || (b ? findHallRoom(b, floor) : null)) : null;
       const isHall = r && roomKindOf(r) === 'hall';
       const isCorridor = r && roomKindOf(r) === 'corridor';
 
@@ -3206,6 +3316,11 @@
 
       const existing = getCorridorPath(r);
       const noHall = !hall;
+      const hallsOnFloor = b ? findHallsOfFloor(b, floor) : [];
+      const multipleHalls = hallsOnFloor.length > 1;
+      const multipleHint = multipleHalls
+        ? ` На этаже несколько Холлов (${hallsOnFloor.length}) — рисуем от того, к которому привязана точка (см. селектор «Привязан к Холлу» выше).`
+        : '';
 
       btnDraw.hidden = pathDrawingMode;
       btnFinish.hidden = !pathDrawingMode;
@@ -3221,13 +3336,13 @@
       }
       if (pathDrawingMode) {
         status.textContent = `Рисуем маршрут «${hall.label}» → «${r.label}»: точек в пути ${pathDrawingBuffer.length}`;
-        hint.textContent = 'Кликайте по плану, добавляя промежуточные точки маршрута. «Готово» сохранит ломаную.';
+        hint.textContent = 'Кликайте по плану, добавляя промежуточные точки маршрута. «Готово» сохранит ломаную.' + multipleHint;
       } else if (existing.length) {
-        status.textContent = `Маршрут от Холла нарисован: ${existing.length} промежуточных точек`;
-        hint.textContent = 'Можно перерисовать (стартует с пустого пути) или удалить существующий.';
+        status.textContent = `Маршрут от «${hall.label}» нарисован: ${existing.length} промежуточных точек`;
+        hint.textContent = 'Можно перерисовать (стартует с пустого пути) или удалить существующий.' + multipleHint;
       } else {
-        status.textContent = 'Маршрут от Холла: не нарисован';
-        hint.textContent = `Нажмите «Рисовать», затем кликайте по плану от «${hall.label}» до «${r.label}».`;
+        status.textContent = `Маршрут от «${hall.label}»: не нарисован`;
+        hint.textContent = `Нажмите «Рисовать», затем кликайте по плану от «${hall.label}» до «${r.label}».` + multipleHint;
       }
     }
 
@@ -3235,7 +3350,10 @@
       const r = selectedMarkupRoom();
       const b = currentEditorBuilding();
       if (!r || !b) return;
-      const hall = findHallRoom(b, currentEditorFloor());
+      // Берём Холл, к которому привязана точка (r.hallId). Если не задан —
+      // первый Холл этажа. На этаже с несколькими Холлами нужно сначала выбрать
+      // нужный Холл в селекторе «Привязан к Холлу» в карточке точки.
+      const hall = resolveHallOfRoom(b, r) || findHallRoom(b, currentEditorFloor());
       if (!hall) {
         appendInfo('Сначала поставьте точку с типом «Холл» на этом этаже.', true);
         return;
@@ -3357,6 +3475,7 @@
           local: { x: r.local.x, z: r.local.z },
           kind: r.kind || (r.isStairs ? 'stairs' : 'room'),
           ...(r.isStairs ? { isStairs: true } : {}),
+          ...(r.hallId ? { hallId: r.hallId } : {}),
           ...(Array.isArray(r.corridorPath) && r.corridorPath.length
             ? { corridorPath: r.corridorPath.map((p) => ({ x: p.x, z: p.z })) }
             : {})
@@ -4898,6 +5017,11 @@
       refreshPathEditorUi();
     });
     document.getElementById('btn-room-update').addEventListener('click', () => {
+      updateSelectedMarkupRoomFromFields();
+    });
+    // Авто-применение смены селектора «Привязан к Холлу»: чтобы превью маршрута
+    // и hint сразу обновились без отдельного клика «Сохранить».
+    document.getElementById('room-edit-hall').addEventListener('change', () => {
       updateSelectedMarkupRoomFromFields();
     });
     document.getElementById('btn-room-delete').addEventListener('click', () => {
