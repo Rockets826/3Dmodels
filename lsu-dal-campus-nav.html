@@ -407,6 +407,42 @@
       <p class="hint" id="floor-rotation-status" style="margin:8px 0 0 0;">—</p>
     </div>
 
+    <div id="floor-shift-panel" class="field" hidden style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
+      <label>Смещение выбранного этажа (XZ)</label>
+      <p class="hint" style="margin:0 0 8px 0;">Доп. смещение <strong>только выбранного этажа</strong> в горизонтальной плоскости (в метрах мира). Не трогает корпус и другие этажи. Сохраняется в браузере.</p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+        <span style="font-size:12px;opacity:0.75;">X:</span>
+        <input type="number" id="floor-shift-x" step="0.1" value="0" style="flex:0 0 78px;min-width:0;" />
+        <span style="font-size:12px;opacity:0.75;">Z:</span>
+        <input type="number" id="floor-shift-z" step="0.1" value="0" style="flex:0 0 78px;min-width:0;" />
+        <span style="font-size:12px;opacity:0.75;">м</span>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center;">
+        <span style="font-size:12px;opacity:0.75;">Шаг:</span>
+        <select id="floor-shift-step" style="flex:0 0 80px;width:auto;padding:6px 8px;">
+          <option value="0.1">0.1 м</option>
+          <option value="0.5" selected>0.5 м</option>
+          <option value="1">1 м</option>
+          <option value="2">2 м</option>
+        </select>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px;justify-content:center;">
+        <button type="button" class="ghost floor-shift-step" data-axis="z" data-sign="-1" title="Сместить этаж на -Z (на шаг)">↑ −Z</button>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px;justify-content:center;">
+        <button type="button" class="ghost floor-shift-step" data-axis="x" data-sign="-1" title="Сместить этаж на -X">← −X</button>
+        <button type="button" class="ghost floor-shift-step" data-axis="x" data-sign="1" title="Сместить этаж на +X">+X →</button>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:4px;justify-content:center;">
+        <button type="button" class="ghost floor-shift-step" data-axis="z" data-sign="1" title="Сместить этаж на +Z">↓ +Z</button>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px;">
+        <button type="button" class="primary" id="btn-floor-shift-apply">Применить значения</button>
+        <button type="button" class="ghost" id="btn-floor-shift-reset" title="Удалить пользовательский override для этого этажа (вернуться к настройке из конфига)">Сбросить этаж</button>
+      </div>
+      <p class="hint" id="floor-shift-status" style="margin:8px 0 0 0;">—</p>
+    </div>
+
     <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
       <label>Поворот корпуса</label>
       <p class="hint" style="margin:0 0 8px 0;">Для здания из «Выберите здание». <strong>Масштаб</strong> — слайдер ниже (множитель к подогнанному GLB); «Скопировать позиции» добавит <code>buildingSizeMultiplier</code>. Общая база всех корпусов — <code>NORMALIZED_BUILDING_MAX_DIM</code> в коде.</p>
@@ -4048,6 +4084,80 @@
 
     loadFloorRotationOverrides();
 
+    // -------------------------------------------------------------------
+    // Пользовательские override'ы XZ-смещения отдельных этажей (метры).
+    // Применяются ПОСЛЕ alignFloorPlanToBuilding и floorPlanLevelNudge,
+    // не затрагивая корпус и другие этажи.
+    // -------------------------------------------------------------------
+    const FLOOR_SHIFT_OVERRIDE_KEY = 'lsu-dal-campus-nav-floor-shift-overrides-v1';
+    const userFloorShiftOverrides = new Map(); // bid -> Map(level -> { x, z })
+
+    function loadFloorShiftOverrides() {
+      try {
+        const raw = localStorage.getItem(FLOOR_SHIFT_OVERRIDE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (!data || typeof data !== 'object') return;
+        for (const bid of Object.keys(data)) {
+          const m = new Map();
+          const lvls = data[bid] || {};
+          for (const lvl of Object.keys(lvls)) {
+            const o = lvls[lvl] || {};
+            const x = Number(o.x);
+            const z = Number(o.z);
+            if (Number.isFinite(x) || Number.isFinite(z)) {
+              m.set(Number(lvl), {
+                x: Number.isFinite(x) ? x : 0,
+                z: Number.isFinite(z) ? z : 0
+              });
+            }
+          }
+          if (m.size) userFloorShiftOverrides.set(bid, m);
+        }
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось прочитать пользовательские смещения этажей', err);
+      }
+    }
+
+    function saveFloorShiftOverrides() {
+      const out = {};
+      for (const [bid, m] of userFloorShiftOverrides) {
+        if (!m.size) continue;
+        out[bid] = {};
+        for (const [lvl, v] of m) out[bid][String(lvl)] = { x: v.x || 0, z: v.z || 0 };
+      }
+      try {
+        localStorage.setItem(FLOOR_SHIFT_OVERRIDE_KEY, JSON.stringify(out));
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось сохранить смещения этажей', err);
+      }
+    }
+
+    function getFloorShiftOverride(bid, level) {
+      const m = userFloorShiftOverrides.get(bid);
+      if (!m) return undefined;
+      const v = m.get(Number(level));
+      return v && (v.x || v.z) ? { x: Number(v.x) || 0, z: Number(v.z) || 0 } : undefined;
+    }
+
+    function setFloorShiftOverride(bid, level, x, z) {
+      if (!userFloorShiftOverrides.has(bid)) {
+        userFloorShiftOverrides.set(bid, new Map());
+      }
+      const m = userFloorShiftOverrides.get(bid);
+      const fx = Number(x) || 0;
+      const fz = Number(z) || 0;
+      if (Math.abs(fx) > 1e-6 || Math.abs(fz) > 1e-6) {
+        m.set(Number(level), { x: fx, z: fz });
+      } else {
+        m.delete(Number(level));
+      }
+      if (!m.size) userFloorShiftOverrides.delete(bid);
+      saveFloorShiftOverrides();
+    }
+
+    loadFloorShiftOverrides();
+
     function applyFloorPlanPerLevelYaw(plan, floorDef, b) {
       if (!floorDef || typeof floorDef !== 'object') return;
       let dy = Number(floorDef.floorPlanRotationY) || 0;
@@ -4265,6 +4375,13 @@
       if (lvNudge && typeof lvNudge === 'object') {
         plan.position.x += Number(lvNudge.x) || 0;
         plan.position.z += Number(lvNudge.z) || 0;
+        plan.updateMatrixWorld(true);
+      }
+      // Пользовательский override XZ-смещения из UI «Смещение выбранного этажа».
+      const userShift = getFloorShiftOverride(bid, level);
+      if (userShift) {
+        plan.position.x += userShift.x;
+        plan.position.z += userShift.z;
         plan.updateMatrixWorld(true);
       }
 
@@ -4529,6 +4646,7 @@
       flyToBuilding(document.getElementById('select-building').value);
       void updateFloorPlan();
       refreshFloorRotationUi();
+      refreshFloorShiftUi();
     });
 
     // ---- Панель «Поворот выбранного этажа» ------------------------------
@@ -4616,6 +4734,85 @@
       appendInfo(`Поворот этажа ${level} в «${b.name}» сброшен.`, false);
     });
 
+    // ---- Панель «Смещение выбранного этажа» -----------------------------
+    function refreshFloorShiftUi() {
+      const panel = document.getElementById('floor-shift-panel');
+      if (!panel) return;
+      const { b, level, hasFloors } = getFloorRotationContext();
+      const visible =
+        MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && hasFloors && b && level != null;
+      panel.hidden = !visible;
+      if (!visible) return;
+      const cur = getFloorShiftOverride(b.id, level) || { x: 0, z: 0 };
+      const xInp = document.getElementById('floor-shift-x');
+      const zInp = document.getElementById('floor-shift-z');
+      if (document.activeElement !== xInp) xInp.value = String(Math.round(cur.x * 1000) / 1000);
+      if (document.activeElement !== zInp) zInp.value = String(Math.round(cur.z * 1000) / 1000);
+      const status = document.getElementById('floor-shift-status');
+      const fl = b.floors.find((f) => Number(f.level) === Number(level)) || {};
+      const cfg = fl.floorPlanLevelNudge;
+      const cfgText = cfg && (cfg.x || cfg.z)
+        ? ` Базовый сдвиг из конфига: X=${(cfg.x || 0).toFixed(2)}, Z=${(cfg.z || 0).toFixed(2)}.`
+        : '';
+      status.textContent =
+        `Корпус: ${b.name}, этаж ${level}. ` +
+        `Текущее пользовательское смещение: X=${cur.x.toFixed(2)} м, Z=${cur.z.toFixed(2)} м.` + cfgText;
+    }
+
+    function applyFloorShift(x, z) {
+      const { b, level } = getFloorRotationContext();
+      if (!b || level == null) return;
+      setFloorShiftOverride(b.id, level, x, z);
+      void updateFloorPlan();
+      refreshFloorShiftUi();
+    }
+
+    function addFloorShiftStep(axis, sign) {
+      const step = Number(document.getElementById('floor-shift-step').value) || 0.1;
+      const xInp = document.getElementById('floor-shift-x');
+      const zInp = document.getElementById('floor-shift-z');
+      let x = Number(xInp.value) || 0;
+      let z = Number(zInp.value) || 0;
+      if (axis === 'x') x = Math.round((x + sign * step) * 1000) / 1000;
+      if (axis === 'z') z = Math.round((z + sign * step) * 1000) / 1000;
+      xInp.value = String(x);
+      zInp.value = String(z);
+      applyFloorShift(x, z);
+    }
+
+    document.querySelectorAll('.floor-shift-step').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        addFloorShiftStep(btn.dataset.axis, Number(btn.dataset.sign));
+      });
+    });
+    document.getElementById('btn-floor-shift-apply').addEventListener('click', () => {
+      const x = Number(document.getElementById('floor-shift-x').value);
+      const z = Number(document.getElementById('floor-shift-z').value);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) {
+        appendInfo('В полях X и Z должны быть числа.', true);
+        return;
+      }
+      applyFloorShift(x, z);
+    });
+    for (const id of ['floor-shift-x', 'floor-shift-z']) {
+      document.getElementById(id).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          document.getElementById('btn-floor-shift-apply').click();
+        }
+      });
+    }
+    document.getElementById('btn-floor-shift-reset').addEventListener('click', () => {
+      const { b, level } = getFloorRotationContext();
+      if (!b || level == null) return;
+      setFloorShiftOverride(b.id, level, 0, 0);
+      document.getElementById('floor-shift-x').value = '0';
+      document.getElementById('floor-shift-z').value = '0';
+      void updateFloorPlan();
+      refreshFloorShiftUi();
+      appendInfo(`Смещение этажа ${level} в «${b.name}» сброшено.`, false);
+    });
+
     document.getElementById('btn-building-rotate-ccw').addEventListener('click', () => {
       const stepDeg = Number(MODEL_CONFIG.PLACEMENT_MODEL_ROTATE_STEP_DEG) || 5;
       applySelectedBuildingRotationDelta((stepDeg * Math.PI) / 180);
@@ -4658,6 +4855,7 @@
       refreshRoomMarkupUi();
       void updateFloorPlan();
       refreshFloorRotationUi();
+      refreshFloorShiftUi();
     });
 
     document.getElementById('toggle-floor-plan').addEventListener('change', () => {
@@ -4921,6 +5119,7 @@
     await updateFloorPlan();
     refreshRoomMarkupUi();
     refreshFloorRotationUi();
+    refreshFloorShiftUi();
     animate();
 
     // Экспорт в window для отладки в консоли
