@@ -4258,14 +4258,27 @@
     function showBuildingInfo(bid) {
       const b = buildingDataById.get(bid);
       if (!b) return;
-      const rooms = (b.rooms || []).map((r) => r.label).join(', ');
       const nFloors = effectiveFloors(b).length;
       const floorNote =
         MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && nFloors > 0
           ? `Этажей (схемы): ${nFloors}<br/>`
           : '';
+      // Краткая статистика по типам точек вместо полного списка лейблов —
+      // длинный список аудиторий мусорно растягивает info-панель.
+      const counts = { room: 0, hall: 0, stairs: 0, corridor: 0 };
+      for (const r of b.rooms || []) {
+        const k = roomKindOf(r);
+        if (counts[k] !== undefined) counts[k]++;
+      }
+      const total = counts.room + counts.hall + counts.stairs + counts.corridor;
+      const parts = [];
+      if (counts.hall) parts.push(`Холлов ${counts.hall}`);
+      if (counts.stairs) parts.push(`Лестниц ${counts.stairs}`);
+      if (counts.room) parts.push(`аудиторий ${counts.room}`);
+      if (counts.corridor) parts.push(`узлов коридора ${counts.corridor}`);
+      const stat = total === 0 ? 'нет точек' : `${total} точек (${parts.join(', ')})`;
       appendInfo(
-        `<strong>${b.name}</strong><br/>${floorNote}Аудитории и точки: ${rooms || '—'}`
+        `<strong>${b.name}</strong><br/>${floorNote}Разметка: ${stat}.`
       );
     }
 
