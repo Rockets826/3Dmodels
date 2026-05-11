@@ -483,10 +483,19 @@
             </div>
             <p class="hint" id="path-editor-hint" style="margin:8px 0 0 0;">Выберите точку в списке. Путь рисуется кликами по плану от Холла этажа до этой точки.</p>
           </div>
+          <div id="corridor-align-panel" style="margin-top:12px;padding:10px;background:rgba(148,163,184,0.10);border:1px solid rgba(148,163,184,0.35);border-radius:6px;" hidden>
+            <p class="mini" id="corridor-align-status" style="margin:0 0 8px 0;">Выровнять серые узлы по выбранному эталону</p>
+            <div class="row" style="gap:8px;flex-wrap:wrap;">
+              <button type="button" id="btn-corridor-align-horiz" class="ghost" title="Все серые узлы этажа в полосе ±3 м по Z от выбранного получат тот же Z (идеальная горизонтальная линия)">Выровнять в горизонталь (Z)</button>
+              <button type="button" id="btn-corridor-align-vert" class="ghost" title="Все серые узлы этажа в полосе ±3 м по X от выбранного получат тот же X (идеальная вертикальная линия)">Выровнять в вертикаль (X)</button>
+            </div>
+            <p class="hint" id="corridor-align-hint" style="margin:8px 0 0 0;">Кнопки активны, когда выбран серый узел коридора. Точки в полосе ±3 м примагнитятся к одной координате, образуя прямую линию. Существующие нарисованные пути обновятся автоматически.</p>
+          </div>
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-export">Экспорт JSON</button>
             <button type="button" id="btn-room-import" class="ghost">Импорт JSON</button>
             <button type="button" id="btn-room-clear-all" class="ghost" title="Удалить все точки этого корпуса">Очистить корпус</button>
+            <button type="button" id="btn-room-clear-everything" class="ghost" title="Удалить точки во ВСЕХ корпусах (с опцией оставить только текущий)">Очистить все корпуса…</button>
           </div>
           <p class="hint" style="margin:0;">Видны точки только текущего этажа (переключите этаж селектором выше). Камера в режиме разметки <strong>не вращается</strong> — выключите режим, чтобы покрутить.</p>
         </div>
@@ -2654,8 +2663,11 @@
           const before = list.length;
           const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
           if (normalized.length !== before) migrated = true;
-          if (normalized.length) b.rooms = normalized;
-          else if (before > 0) b.rooms = []; // все были waypoints — обнуляем
+          // localStorage авторитетен: если для корпуса сохранён массив (даже пустой) —
+          // он полностью перезаписывает хардкод-дефолты из MODEL_CONFIG.
+          // Это нужно, чтобы после «Очистить все корпуса…» дефолтные Холл/Лестница
+          // не «воскресали» при перезагрузке страницы.
+          b.rooms = normalized;
         }
       } catch (err) {
         console.warn('[LSU Nav] Не удалось прочитать разметку аудиторий из localStorage', err);
@@ -2890,6 +2902,7 @@
       fillRoomEditorFields();
       refreshRoomMarkupVisuals();
       refreshPathEditorUi();
+      refreshCorridorAlignUi();
     }
 
     function makeRoomId(bid) {
@@ -3178,6 +3191,146 @@
       appendInfo(`Маршрут от Холла до «${r.label}» удалён.`, false);
     }
 
+    /**
+     * Пересчёт «метры → локальные единицы плана» для текущего этажа.
+     * Использует ту же логику, что и snapPathClickToNearestMarker.
+     */
+    function metersToLocalUnitsOnCurrentFloor() {
+      let localToWorld = MODEL_CONFIG.FLOOR_PLAN_SCALE || 1;
+      if (currentFloorMesh) {
+        const o0 = new THREE.Vector3().setFromMatrixPosition(currentFloorMesh.matrixWorld);
+        const oX = new THREE.Vector3(1, 0, 0).applyMatrix4(currentFloorMesh.matrixWorld);
+        const oZ = new THREE.Vector3(0, 0, 1).applyMatrix4(currentFloorMesh.matrixWorld);
+        const sx = o0.distanceTo(oX) || 1;
+        const sz = o0.distanceTo(oZ) || 1;
+        localToWorld = (sx + sz) * 0.5;
+      }
+      return localToWorld || 1;
+    }
+
+    /**
+     * Выровнять все серые узлы коридора текущего этажа, попадающие в полосу
+     * ±thresholdMeters по «противоположной» оси, к координате выбранного эталона.
+     *  axis === 'z' — горизонтальная линия: всем точкам в полосе |z - anchor.z| < threshold
+     *                  присваиваем z = anchor.z (X не трогаем).
+     *  axis === 'x' — вертикальная линия:   всем точкам в полосе |x - anchor.x| < threshold
+     *                  присваиваем x = anchor.x (Z не трогаем).
+     * Сами точки НЕ удаляются. Если у каких-то аудиторий уже нарисован corridorPath
+     * через эти узлы, координаты в corridorPath тоже сдвигаются синхронно
+     * (по совпадению старой координаты узла, допуск 0.15 м), чтобы пути не «отрывались».
+     */
+    function alignCorridorAxisByAnchor(axis, thresholdMeters = 3.0, snapTolMeters = 0.15) {
+      const b = currentEditorBuilding();
+      if (!b) return;
+      const anchor = selectedMarkupRoom();
+      if (!anchor || roomKindOf(anchor) !== 'corridor') {
+        appendInfo('Выберите серый «Узел коридора» — он будет эталоном линии.', true);
+        return;
+      }
+      const floor = Number(anchor.floor);
+      const metersToLocal = 1 / metersToLocalUnitsOnCurrentFloor();
+      const thresholdLocal = thresholdMeters * metersToLocal;
+      const snapTolLocal = snapTolMeters * metersToLocal;
+
+      const corridorNodes = (b.rooms || []).filter(
+        (r) => Number(r.floor) === floor && roomKindOf(r) === 'corridor'
+      );
+
+      const ax = Number(anchor.local.x);
+      const az = Number(anchor.local.z);
+
+      // Сохраняем «старые» координаты узлов, чтобы потом подвинуть точки в corridorPath
+      // у соседних аудиторий синхронно с узлами.
+      const moves = []; // { oldX, oldZ, newX, newZ }
+      let movedCount = 0;
+
+      for (const node of corridorNodes) {
+        const nx = Number(node.local.x);
+        const nz = Number(node.local.z);
+        let newX = nx;
+        let newZ = nz;
+        if (axis === 'z') {
+          if (Math.abs(nz - az) > thresholdLocal) continue;
+          newZ = az;
+        } else if (axis === 'x') {
+          if (Math.abs(nx - ax) > thresholdLocal) continue;
+          newX = ax;
+        } else {
+          return;
+        }
+        if (newX === nx && newZ === nz) continue;
+        node.local.x = Number(newX.toFixed(3));
+        node.local.z = Number(newZ.toFixed(3));
+        moves.push({ oldX: nx, oldZ: nz, newX: node.local.x, newZ: node.local.z });
+        movedCount++;
+      }
+
+      // Подвинуть точки в нарисованных corridorPath, которые «сидели» на старых
+      // координатах этих узлов (с допуском snapTolLocal).
+      let pathPointsAdjusted = 0;
+      if (moves.length) {
+        for (const r of b.rooms || []) {
+          if (!Array.isArray(r.corridorPath) || r.corridorPath.length === 0) continue;
+          if (Number(r.floor) !== floor) continue;
+          for (let i = 0; i < r.corridorPath.length; i++) {
+            const p = r.corridorPath[i];
+            const px = Number(p.x);
+            const pz = Number(p.z);
+            for (const m of moves) {
+              if (Math.abs(px - m.oldX) <= snapTolLocal && Math.abs(pz - m.oldZ) <= snapTolLocal) {
+                r.corridorPath[i] = { x: m.newX, z: m.newZ };
+                pathPointsAdjusted++;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (!movedCount) {
+        appendInfo(
+          `Линия не изменилась: в полосе ±${thresholdMeters} м ${axis === 'z' ? 'по Z' : 'по X'} от выбранного узла других серых точек нет (или они уже стоят ровно).`,
+          false
+        );
+        return;
+      }
+
+      savePersistedRoomMarkup();
+      indexRooms();
+      refreshRoomMarkupVisuals();
+      refreshPathDrawingPreview();
+      const axisName = axis === 'z' ? 'горизонтальную' : 'вертикальную';
+      appendInfo(
+        `Выровнено ${movedCount} серых узлов в ${axisName} линию по выбранному эталону (полоса ±${thresholdMeters} м).` +
+          (pathPointsAdjusted ? ` Синхронно обновлено ${pathPointsAdjusted} точек уже нарисованных маршрутов.` : ''),
+        false
+      );
+    }
+
+    function refreshCorridorAlignUi() {
+      const panel = document.getElementById('corridor-align-panel');
+      if (!panel) return;
+      const r = selectedMarkupRoom();
+      const isCorridor = r && roomKindOf(r) === 'corridor';
+      panel.hidden = !roomMarkupMode || !r;
+      if (panel.hidden) return;
+      const btnH = document.getElementById('btn-corridor-align-horiz');
+      const btnV = document.getElementById('btn-corridor-align-vert');
+      const status = document.getElementById('corridor-align-status');
+      const hint = document.getElementById('corridor-align-hint');
+      btnH.disabled = !isCorridor;
+      btnV.disabled = !isCorridor;
+      if (isCorridor) {
+        status.textContent = `Эталон: «${r.label}» (X=${Number(r.local.x).toFixed(2)}, Z=${Number(r.local.z).toFixed(2)})`;
+        hint.textContent =
+          'Нажмите «Горизонталь (Z)» — все серые узлы этажа в полосе ±3 м по Z примагнитятся к Z эталона. «Вертикаль (X)» — аналогично по X. Точки не удаляются.';
+      } else {
+        status.textContent = 'Выберите серый «Узел коридора» — он станет эталоном линии';
+        hint.textContent =
+          'Сейчас выбран не серый узел. Откройте серую точку в списке (или кликните по ней на плане) — кнопки активируются.';
+      }
+    }
+
     function exportRoomsOfCurrentBuilding() {
       const b = currentEditorBuilding();
       if (!b) return;
@@ -3265,6 +3418,57 @@
       savePersistedRoomMarkup();
       refreshRoomMarkupUi();
       appendInfo(`Удалено ${n} точек у «${b.name}».`, false);
+    }
+
+    /**
+     * Удалить разметку (точки) во всех корпусах. Сначала спрашиваем «оставить текущий?»,
+     * затем подтверждение. Это удобно при «уборке» накопленных за тесты точек:
+     * можно одним кликом стереть Холлы/Лестницы/«Новые точки» по всем корпусам
+     * и оставить только тот, над которым сейчас работаешь.
+     */
+    function clearRoomsAcrossAllBuildings() {
+      const current = currentEditorBuilding();
+      const buildings = MODEL_CONFIG.buildings || [];
+      const totalAll = buildings.reduce((acc, b) => acc + ((b.rooms || []).length), 0);
+      if (!totalAll) {
+        appendInfo('В разметке уже нет точек ни в одном корпусе.', false);
+        return;
+      }
+      const keepCurrent = current && (current.rooms || []).length > 0
+        ? window.confirm(
+            `Оставить точки текущего корпуса «${current.name}» (${current.rooms.length} шт.)?\n` +
+              `  OK — оставить «${current.name}», удалить во всех остальных корпусах.\n` +
+              `  Отмена — удалить ВЕЗДЕ, включая «${current.name}».`
+          )
+        : false;
+      const toClear = keepCurrent
+        ? buildings.filter((b) => b.id !== current.id && (b.rooms || []).length > 0)
+        : buildings.filter((b) => (b.rooms || []).length > 0);
+      if (!toClear.length) {
+        appendInfo('Нечего удалять: в выбранных корпусах нет точек.', false);
+        return;
+      }
+      const totalToDelete = toClear.reduce((acc, b) => acc + ((b.rooms || []).length), 0);
+      const names = toClear.map((b) => b.name).join(', ');
+      const ok = window.confirm(
+        `Удалить ${totalToDelete} точек ${keepCurrent ? `во всех корпусах кроме «${current.name}»` : 'во ВСЕХ корпусах'}?\n` +
+          `Будут затронуты: ${names}.\nДействие нельзя отменить.`
+      );
+      if (!ok) return;
+      for (const b of toClear) {
+        b.rooms = [];
+      }
+      if (!keepCurrent) selectedRoomMarkupId = null;
+      cancelPathDrawing();
+      indexRooms();
+      populateRouteSelects();
+      savePersistedRoomMarkup();
+      refreshRoomMarkupUi();
+      appendInfo(
+        `Удалено ${totalToDelete} точек в ${toClear.length} корпусах` +
+          (keepCurrent ? ` (текущий «${current.name}» сохранён).` : '.'),
+        false
+      );
     }
 
     function floorPlanWorldPlane() {
@@ -4335,6 +4539,10 @@
       clearAllRoomsOfCurrentBuilding();
     });
 
+    document.getElementById('btn-room-clear-everything').addEventListener('click', () => {
+      clearRoomsAcrossAllBuildings();
+    });
+
     document.getElementById('btn-path-draw').addEventListener('click', () => {
       startPathDrawing();
     });
@@ -4351,6 +4559,13 @@
       if (window.confirm('Удалить нарисованный маршрут от Холла до этой точки?')) {
         deleteCorridorPathOfSelected();
       }
+    });
+
+    document.getElementById('btn-corridor-align-horiz').addEventListener('click', () => {
+      alignCorridorAxisByAnchor('z');
+    });
+    document.getElementById('btn-corridor-align-vert').addEventListener('click', () => {
+      alignCorridorAxisByAnchor('x');
     });
 
     document.getElementById('btn-reset-camera').addEventListener('click', () => {
