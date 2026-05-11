@@ -91,6 +91,14 @@
     }
 
     option { background: #1a222c; color: #fff; }
+    optgroup {
+      background: #0b121b;
+      color: #93c5fd;
+      font-weight: 700;
+      font-style: normal;
+      letter-spacing: 0.02em;
+    }
+    optgroup option { padding-left: 12px; color: #fff; }
 
     .row {
       display: flex;
@@ -3568,7 +3576,7 @@
           groups.set(key, {
             buildingName: b.name,
             floor: Number(data.floor) || 1,
-            label: `${b.name} — эт.${data.floor}`,
+            label: `── ${b.name} · Этаж ${data.floor} ──`,
             items: []
           });
         }
