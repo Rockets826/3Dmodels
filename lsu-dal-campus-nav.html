@@ -467,7 +467,17 @@
               </select>
             </div>
           </div>
-          <p id="room-edit-coords" class="mini">Координаты: —</p>
+          <div class="row" style="gap:8px;">
+            <div class="field" style="margin:0;flex:1;">
+              <label for="room-edit-x">Координата X (локальная)</label>
+              <input id="room-edit-x" type="number" step="0.01" value="0" />
+            </div>
+            <div class="field" style="margin:0;flex:1;">
+              <label for="room-edit-z">Координата Z (локальная)</label>
+              <input id="room-edit-z" type="number" step="0.01" value="0" />
+            </div>
+          </div>
+          <p class="mini" id="room-edit-coords" style="margin:0 0 4px 0;">Введите точные X и Z — точка переедет на них после «Сохранить точку». Уже нарисованные маршруты, проходящие через эту точку, обновятся автоматически.</p>
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-update" class="primary">Сохранить точку</button>
             <button type="button" id="btn-room-delete" class="ghost">Удалить точку</button>
@@ -482,14 +492,6 @@
               <button type="button" id="btn-path-delete" class="ghost" hidden>Удалить путь</button>
             </div>
             <p class="hint" id="path-editor-hint" style="margin:8px 0 0 0;">Выберите точку в списке. Путь рисуется кликами по плану от Холла этажа до этой точки.</p>
-          </div>
-          <div id="corridor-align-panel" style="margin-top:12px;padding:10px;background:rgba(148,163,184,0.10);border:1px solid rgba(148,163,184,0.35);border-radius:6px;" hidden>
-            <p class="mini" id="corridor-align-status" style="margin:0 0 8px 0;">Выровнять серые узлы по выбранному эталону</p>
-            <div class="row" style="gap:8px;flex-wrap:wrap;">
-              <button type="button" id="btn-corridor-align-horiz" class="ghost" title="Все серые узлы этажа в полосе ±3 м по Z от выбранного получат тот же Z (идеальная горизонтальная линия)">Выровнять в горизонталь (Z)</button>
-              <button type="button" id="btn-corridor-align-vert" class="ghost" title="Все серые узлы этажа в полосе ±3 м по X от выбранного получат тот же X (идеальная вертикальная линия)">Выровнять в вертикаль (X)</button>
-            </div>
-            <p class="hint" id="corridor-align-hint" style="margin:8px 0 0 0;">Кнопки активны, когда выбран серый узел коридора. Точки в полосе ±3 м примагнитятся к одной координате, образуя прямую линию. Существующие нарисованные пути обновятся автоматически.</p>
           </div>
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-export">Экспорт JSON</button>
@@ -2781,7 +2783,8 @@
       const label = document.getElementById('room-edit-label');
       const floor = document.getElementById('room-edit-floor');
       const type = document.getElementById('room-edit-type');
-      const coords = document.getElementById('room-edit-coords');
+      const xInp = document.getElementById('room-edit-x');
+      const zInp = document.getElementById('room-edit-z');
       const btnUpd = document.getElementById('btn-room-update');
       const btnDel = document.getElementById('btn-room-delete');
 
@@ -2789,6 +2792,8 @@
       label.disabled = !enabled;
       floor.disabled = !enabled;
       type.disabled = !enabled;
+      if (xInp) xInp.disabled = !enabled;
+      if (zInp) zInp.disabled = !enabled;
       btnUpd.disabled = !enabled;
       btnDel.disabled = !enabled;
 
@@ -2796,13 +2801,15 @@
         label.value = '';
         floor.value = String(currentEditorFloor());
         type.value = 'room';
-        coords.textContent = 'Координаты: —';
+        if (xInp) xInp.value = '0';
+        if (zInp) zInp.value = '0';
         return;
       }
       label.value = r.label || '';
       floor.value = String(r.floor || 1);
       type.value = r.isStairs ? 'stairs' : roomKindOf(r);
-      coords.textContent = `Координаты: x=${(r.local?.x ?? 0).toFixed(2)}, z=${(r.local?.z ?? 0).toFixed(2)}`;
+      if (xInp) xInp.value = Number(r.local?.x ?? 0).toFixed(2);
+      if (zInp) zInp.value = Number(r.local?.z ?? 0).toFixed(2);
     }
 
     function refreshRoomMarkupVisuals() {
@@ -2902,7 +2909,6 @@
       fillRoomEditorFields();
       refreshRoomMarkupVisuals();
       refreshPathEditorUi();
-      refreshCorridorAlignUi();
     }
 
     function makeRoomId(bid) {
@@ -2950,19 +2956,64 @@
       const label = document.getElementById('room-edit-label').value.trim();
       const floorVal = parseInt(document.getElementById('room-edit-floor').value, 10);
       const kind = document.getElementById('room-edit-type').value;
+      const xVal = parseFloat(document.getElementById('room-edit-x')?.value);
+      const zVal = parseFloat(document.getElementById('room-edit-z')?.value);
       if (!label) {
         appendInfo('Название точки не может быть пустым.', true);
         return;
       }
+      if (!Number.isFinite(xVal) || !Number.isFinite(zVal)) {
+        appendInfo('Координаты X и Z должны быть числами.', true);
+        return;
+      }
+      const oldFloor = Number(r.floor) || 1;
+      const oldX = Number(r.local?.x ?? 0);
+      const oldZ = Number(r.local?.z ?? 0);
+      const newX = Number(xVal.toFixed(3));
+      const newZ = Number(zVal.toFixed(3));
+
       r.label = label;
       r.floor = Number.isFinite(floorVal) ? Math.max(1, floorVal) : 1;
       r.kind = ['hall', 'stairs', 'room', 'corridor'].includes(kind) ? kind : 'room';
       r.isStairs = r.kind === 'stairs';
+      r.local = { x: newX, z: newZ };
+
+      // Если координаты реально поменялись и этаж не сменили — синхронно сдвинем
+      // те точки в corridorPath других аудиторий этого корпуса/этажа, которые
+      // «сидели» на старых координатах этой точки (допуск 0.15 в локальных единицах).
+      // Это сохранит уже нарисованные маршруты прикреплёнными к точке, а не
+      // оставит «висящие» углы поломки. При смене этажа такая привязка теряет
+      // смысл (точки разных этажей геометрически независимы), поэтому пропускаем.
+      const tol = 0.15;
+      if ((oldX !== newX || oldZ !== newZ) && oldFloor === r.floor) {
+        let adjusted = 0;
+        for (const other of b.rooms || []) {
+          if (other === r) continue;
+          if (Number(other.floor) !== oldFloor) continue;
+          if (!Array.isArray(other.corridorPath) || other.corridorPath.length === 0) continue;
+          for (let i = 0; i < other.corridorPath.length; i++) {
+            const p = other.corridorPath[i];
+            const px = Number(p.x);
+            const pz = Number(p.z);
+            if (Math.abs(px - oldX) <= tol && Math.abs(pz - oldZ) <= tol) {
+              other.corridorPath[i] = { x: newX, z: newZ };
+              adjusted++;
+            }
+          }
+        }
+        if (adjusted) {
+          console.log(`[Markup] Подвинуто ${adjusted} точек в чужих corridorPath вместе с «${r.label}».`);
+        }
+      }
+
       indexRooms();
       populateRouteSelects();
       savePersistedRoomMarkup();
       refreshRoomMarkupUi();
-      appendInfo(`Точка «${r.label}» сохранена.`, false);
+      appendInfo(
+        `Точка «${r.label}» сохранена (X=${newX.toFixed(2)}, Z=${newZ.toFixed(2)}).`,
+        false
+      );
     }
 
     function deleteSelectedMarkupRoom() {
@@ -3189,146 +3240,6 @@
       refreshRoomMarkupVisuals();
       refreshPathEditorUi();
       appendInfo(`Маршрут от Холла до «${r.label}» удалён.`, false);
-    }
-
-    /**
-     * Пересчёт «метры → локальные единицы плана» для текущего этажа.
-     * Использует ту же логику, что и snapPathClickToNearestMarker.
-     */
-    function metersToLocalUnitsOnCurrentFloor() {
-      let localToWorld = MODEL_CONFIG.FLOOR_PLAN_SCALE || 1;
-      if (currentFloorMesh) {
-        const o0 = new THREE.Vector3().setFromMatrixPosition(currentFloorMesh.matrixWorld);
-        const oX = new THREE.Vector3(1, 0, 0).applyMatrix4(currentFloorMesh.matrixWorld);
-        const oZ = new THREE.Vector3(0, 0, 1).applyMatrix4(currentFloorMesh.matrixWorld);
-        const sx = o0.distanceTo(oX) || 1;
-        const sz = o0.distanceTo(oZ) || 1;
-        localToWorld = (sx + sz) * 0.5;
-      }
-      return localToWorld || 1;
-    }
-
-    /**
-     * Выровнять все серые узлы коридора текущего этажа, попадающие в полосу
-     * ±thresholdMeters по «противоположной» оси, к координате выбранного эталона.
-     *  axis === 'z' — горизонтальная линия: всем точкам в полосе |z - anchor.z| < threshold
-     *                  присваиваем z = anchor.z (X не трогаем).
-     *  axis === 'x' — вертикальная линия:   всем точкам в полосе |x - anchor.x| < threshold
-     *                  присваиваем x = anchor.x (Z не трогаем).
-     * Сами точки НЕ удаляются. Если у каких-то аудиторий уже нарисован corridorPath
-     * через эти узлы, координаты в corridorPath тоже сдвигаются синхронно
-     * (по совпадению старой координаты узла, допуск 0.15 м), чтобы пути не «отрывались».
-     */
-    function alignCorridorAxisByAnchor(axis, thresholdMeters = 3.0, snapTolMeters = 0.15) {
-      const b = currentEditorBuilding();
-      if (!b) return;
-      const anchor = selectedMarkupRoom();
-      if (!anchor || roomKindOf(anchor) !== 'corridor') {
-        appendInfo('Выберите серый «Узел коридора» — он будет эталоном линии.', true);
-        return;
-      }
-      const floor = Number(anchor.floor);
-      const metersToLocal = 1 / metersToLocalUnitsOnCurrentFloor();
-      const thresholdLocal = thresholdMeters * metersToLocal;
-      const snapTolLocal = snapTolMeters * metersToLocal;
-
-      const corridorNodes = (b.rooms || []).filter(
-        (r) => Number(r.floor) === floor && roomKindOf(r) === 'corridor'
-      );
-
-      const ax = Number(anchor.local.x);
-      const az = Number(anchor.local.z);
-
-      // Сохраняем «старые» координаты узлов, чтобы потом подвинуть точки в corridorPath
-      // у соседних аудиторий синхронно с узлами.
-      const moves = []; // { oldX, oldZ, newX, newZ }
-      let movedCount = 0;
-
-      for (const node of corridorNodes) {
-        const nx = Number(node.local.x);
-        const nz = Number(node.local.z);
-        let newX = nx;
-        let newZ = nz;
-        if (axis === 'z') {
-          if (Math.abs(nz - az) > thresholdLocal) continue;
-          newZ = az;
-        } else if (axis === 'x') {
-          if (Math.abs(nx - ax) > thresholdLocal) continue;
-          newX = ax;
-        } else {
-          return;
-        }
-        if (newX === nx && newZ === nz) continue;
-        node.local.x = Number(newX.toFixed(3));
-        node.local.z = Number(newZ.toFixed(3));
-        moves.push({ oldX: nx, oldZ: nz, newX: node.local.x, newZ: node.local.z });
-        movedCount++;
-      }
-
-      // Подвинуть точки в нарисованных corridorPath, которые «сидели» на старых
-      // координатах этих узлов (с допуском snapTolLocal).
-      let pathPointsAdjusted = 0;
-      if (moves.length) {
-        for (const r of b.rooms || []) {
-          if (!Array.isArray(r.corridorPath) || r.corridorPath.length === 0) continue;
-          if (Number(r.floor) !== floor) continue;
-          for (let i = 0; i < r.corridorPath.length; i++) {
-            const p = r.corridorPath[i];
-            const px = Number(p.x);
-            const pz = Number(p.z);
-            for (const m of moves) {
-              if (Math.abs(px - m.oldX) <= snapTolLocal && Math.abs(pz - m.oldZ) <= snapTolLocal) {
-                r.corridorPath[i] = { x: m.newX, z: m.newZ };
-                pathPointsAdjusted++;
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      if (!movedCount) {
-        appendInfo(
-          `Линия не изменилась: в полосе ±${thresholdMeters} м ${axis === 'z' ? 'по Z' : 'по X'} от выбранного узла других серых точек нет (или они уже стоят ровно).`,
-          false
-        );
-        return;
-      }
-
-      savePersistedRoomMarkup();
-      indexRooms();
-      refreshRoomMarkupVisuals();
-      refreshPathDrawingPreview();
-      const axisName = axis === 'z' ? 'горизонтальную' : 'вертикальную';
-      appendInfo(
-        `Выровнено ${movedCount} серых узлов в ${axisName} линию по выбранному эталону (полоса ±${thresholdMeters} м).` +
-          (pathPointsAdjusted ? ` Синхронно обновлено ${pathPointsAdjusted} точек уже нарисованных маршрутов.` : ''),
-        false
-      );
-    }
-
-    function refreshCorridorAlignUi() {
-      const panel = document.getElementById('corridor-align-panel');
-      if (!panel) return;
-      const r = selectedMarkupRoom();
-      const isCorridor = r && roomKindOf(r) === 'corridor';
-      panel.hidden = !roomMarkupMode || !r;
-      if (panel.hidden) return;
-      const btnH = document.getElementById('btn-corridor-align-horiz');
-      const btnV = document.getElementById('btn-corridor-align-vert');
-      const status = document.getElementById('corridor-align-status');
-      const hint = document.getElementById('corridor-align-hint');
-      btnH.disabled = !isCorridor;
-      btnV.disabled = !isCorridor;
-      if (isCorridor) {
-        status.textContent = `Эталон: «${r.label}» (X=${Number(r.local.x).toFixed(2)}, Z=${Number(r.local.z).toFixed(2)})`;
-        hint.textContent =
-          'Нажмите «Горизонталь (Z)» — все серые узлы этажа в полосе ±3 м по Z примагнитятся к Z эталона. «Вертикаль (X)» — аналогично по X. Точки не удаляются.';
-      } else {
-        status.textContent = 'Выберите серый «Узел коридора» — он станет эталоном линии';
-        hint.textContent =
-          'Сейчас выбран не серый узел. Откройте серую точку в списке (или кликните по ней на плане) — кнопки активируются.';
-      }
     }
 
     function exportRoomsOfCurrentBuilding() {
@@ -4559,13 +4470,6 @@
       if (window.confirm('Удалить нарисованный маршрут от Холла до этой точки?')) {
         deleteCorridorPathOfSelected();
       }
-    });
-
-    document.getElementById('btn-corridor-align-horiz').addEventListener('click', () => {
-      alignCorridorAxisByAnchor('z');
-    });
-    document.getElementById('btn-corridor-align-vert').addEventListener('click', () => {
-      alignCorridorAxisByAnchor('x');
     });
 
     document.getElementById('btn-reset-camera').addEventListener('click', () => {
