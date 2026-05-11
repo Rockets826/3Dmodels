@@ -385,6 +385,28 @@
       <select id="select-floor"></select>
     </div>
 
+    <div id="floor-rotation-panel" class="field" hidden style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
+      <label>Поворот выбранного этажа (Y)</label>
+      <p class="hint" style="margin:0 0 8px 0;">Доп. поворот <strong>только выбранного этажа</strong> в плоскости пола (вокруг вертикали). Не трогает корпус и другие этажи. Сохраняется в браузере.</p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="number" id="floor-rotation-input" step="1" value="0" style="flex:0 0 90px;min-width:0;" />
+        <span style="font-size:12px;opacity:0.75;">градусов (доп. к корпусному)</span>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px;">
+        <button type="button" class="ghost floor-rot-step" data-delta="-90">−90°</button>
+        <button type="button" class="ghost floor-rot-step" data-delta="-15">−15°</button>
+        <button type="button" class="ghost floor-rot-step" data-delta="-5">−5°</button>
+        <button type="button" class="ghost floor-rot-step" data-delta="5">+5°</button>
+        <button type="button" class="ghost floor-rot-step" data-delta="15">+15°</button>
+        <button type="button" class="ghost floor-rot-step" data-delta="90">+90°</button>
+      </div>
+      <div class="row" style="gap:8px;margin-top:8px;">
+        <button type="button" class="primary" id="btn-floor-rotation-apply">Применить значение</button>
+        <button type="button" class="ghost" id="btn-floor-rotation-reset" title="Удалить пользовательский override для этого этажа (вернуться к настройке из конфига)">Сбросить этаж</button>
+      </div>
+      <p class="hint" id="floor-rotation-status" style="margin:8px 0 0 0;">—</p>
+    </div>
+
     <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
       <label>Поворот корпуса</label>
       <p class="hint" style="margin:0 0 8px 0;">Для здания из «Выберите здание». <strong>Масштаб</strong> — слайдер ниже (множитель к подогнанному GLB); «Скопировать позиции» добавит <code>buildingSizeMultiplier</code>. Общая база всех корпусов — <code>NORMALIZED_BUILDING_MAX_DIM</code> в коде.</p>
@@ -665,16 +687,14 @@
         modelScale: 1,
         disabled: false,
         floorPlanLod: true,
-        /** Этажи повёрнуты на 180° по оси X (rotation X = π). */
-        floorPlanRotation: { x: Math.PI, y: 0, z: 0 },
-        /** После X-флипа winding треугольников инвертируется — без DoubleSide стены
-         * могут пропадать «с одной стороны». Включаем для всех этажей. */
-        floorPlanDoubleSide: true,
+        /** Все этажи развёрнуты на 180° (раньше вход выходил сзади). */
+        floorPlanRotation: { x: 0, y: Math.PI, z: 0 },
         floorPlanMatchBuildingFootprint: true,
         floors: [
           { level: 1, modelPath: 'systemaetajey/3k/1fl.glb' },
           { level: 2, modelPath: 'systemaetajey/3k/2fl.glb' },
-          { level: 3, modelPath: 'systemaetajey/3k/3fl.glb' }
+          /** 3 этаж экспортирован FrontSide → стены пропадают «с одной стороны»; DoubleSide только тут. */
+          { level: 3, modelPath: 'systemaetajey/3k/3fl.glb', floorPlanLevelDoubleSide: true }
         ],
         rooms: [
           { id: 'k03-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
@@ -3964,9 +3984,78 @@
       return true;
     }
 
-    function applyFloorPlanPerLevelYaw(plan, floorDef) {
+    // -------------------------------------------------------------------
+    // Пользовательские override'ы поворота отдельных этажей по Y (yaw).
+    // Не трогают корпус и другие этажи. Сохраняются в localStorage.
+    // -------------------------------------------------------------------
+    const FLOOR_ROTATION_OVERRIDE_KEY = 'lsu-dal-campus-nav-floor-rotation-overrides-v1';
+    const userFloorRotationOverrides = new Map(); // bid -> Map(level -> radians)
+
+    function loadFloorRotationOverrides() {
+      try {
+        const raw = localStorage.getItem(FLOOR_ROTATION_OVERRIDE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (!data || typeof data !== 'object') return;
+        for (const bid of Object.keys(data)) {
+          const m = new Map();
+          const lvls = data[bid] || {};
+          for (const lvl of Object.keys(lvls)) {
+            const v = Number(lvls[lvl]);
+            if (Number.isFinite(v)) m.set(Number(lvl), v);
+          }
+          if (m.size) userFloorRotationOverrides.set(bid, m);
+        }
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось прочитать пользовательские повороты этажей', err);
+      }
+    }
+
+    function saveFloorRotationOverrides() {
+      const out = {};
+      for (const [bid, m] of userFloorRotationOverrides) {
+        if (!m.size) continue;
+        out[bid] = {};
+        for (const [lvl, v] of m) out[bid][String(lvl)] = v;
+      }
+      try {
+        localStorage.setItem(FLOOR_ROTATION_OVERRIDE_KEY, JSON.stringify(out));
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось сохранить повороты этажей', err);
+      }
+    }
+
+    function getFloorRotationOverride(bid, level) {
+      const m = userFloorRotationOverrides.get(bid);
+      if (!m) return undefined;
+      const v = m.get(Number(level));
+      return Number.isFinite(v) ? v : undefined;
+    }
+
+    function setFloorRotationOverride(bid, level, radians) {
+      if (!userFloorRotationOverrides.has(bid)) {
+        userFloorRotationOverrides.set(bid, new Map());
+      }
+      const m = userFloorRotationOverrides.get(bid);
+      if (Number.isFinite(radians) && Math.abs(radians) > 1e-6) {
+        m.set(Number(level), radians);
+      } else {
+        m.delete(Number(level));
+      }
+      if (!m.size) userFloorRotationOverrides.delete(bid);
+      saveFloorRotationOverrides();
+    }
+
+    loadFloorRotationOverrides();
+
+    function applyFloorPlanPerLevelYaw(plan, floorDef, b) {
       if (!floorDef || typeof floorDef !== 'object') return;
-      const dy = Number(floorDef.floorPlanRotationY);
+      let dy = Number(floorDef.floorPlanRotationY) || 0;
+      // Подмешиваем user-override из UI «Поворот выбранного этажа».
+      if (b && b.id != null) {
+        const ovr = getFloorRotationOverride(b.id, floorDef.level);
+        if (Number.isFinite(ovr)) dy += ovr;
+      }
       if (!Number.isFinite(dy) || dy === 0) return;
       plan.rotation.y += dy;
       plan.updateMatrixWorld(true);
@@ -3976,7 +4065,7 @@
     function applyFloorPlanOrientation(plan, b, floorDef) {
       const root = buildingMeshes.get(b.id);
       if (buildingUsesDistrictEmbed(b) && root && tryApplyDistrictShellFloorOrientation(plan, root, b)) {
-        applyFloorPlanPerLevelYaw(plan, floorDef);
+        applyFloorPlanPerLevelYaw(plan, floorDef, b);
         return;
       }
 
@@ -3990,7 +4079,7 @@
         plan.rotation.y = b.rotationY || 0;
         plan.rotation.z = 0;
       }
-      applyFloorPlanPerLevelYaw(plan, floorDef);
+      applyFloorPlanPerLevelYaw(plan, floorDef, b);
     }
 
     /** Масштаб и смещение: по bbox корпуса в мире (XZ), низ плана на общую «подошву» корпуса. */
@@ -4439,6 +4528,92 @@
       setSelectedBuilding(document.getElementById('select-building').value);
       flyToBuilding(document.getElementById('select-building').value);
       void updateFloorPlan();
+      refreshFloorRotationUi();
+    });
+
+    // ---- Панель «Поворот выбранного этажа» ------------------------------
+    function getFloorRotationContext() {
+      const bid = document.getElementById('select-building').value;
+      const b = buildingDataById.get(bid) || null;
+      const level = parseInt(document.getElementById('select-floor').value, 10);
+      const hasFloors = !!(b && Array.isArray(b.floors) && b.floors.length);
+      return { b, bid, level: Number.isFinite(level) ? level : null, hasFloors };
+    }
+
+    function refreshFloorRotationUi() {
+      const panel = document.getElementById('floor-rotation-panel');
+      if (!panel) return;
+      const { b, level, hasFloors } = getFloorRotationContext();
+      const visible =
+        MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && hasFloors && b && level != null;
+      panel.hidden = !visible;
+      if (!visible) return;
+      const ovr = getFloorRotationOverride(b.id, level);
+      const deg = Number.isFinite(ovr) ? (ovr * 180) / Math.PI : 0;
+      const input = document.getElementById('floor-rotation-input');
+      // Если пользователь сейчас фокусирован в input — не затираем его правки.
+      if (document.activeElement !== input) {
+        input.value = String(Math.round(deg * 100) / 100);
+      }
+      const status = document.getElementById('floor-rotation-status');
+      const fromConfig = Number(
+        (b.floors.find((f) => Number(f.level) === Number(level)) || {}).floorPlanRotationY
+      );
+      const cfgDeg = Number.isFinite(fromConfig) ? (fromConfig * 180) / Math.PI : 0;
+      const cfgText = Math.abs(cfgDeg) > 0.01
+        ? ` Базовый из конфига для этого этажа: ${cfgDeg.toFixed(1)}°.`
+        : '';
+      status.textContent = `Корпус: ${b.name}, этаж ${level}. Текущий пользовательский поворот: ${deg.toFixed(1)}°.${cfgText}`;
+    }
+
+    function applyFloorRotationDegrees(absoluteDeg) {
+      const { b, level } = getFloorRotationContext();
+      if (!b || level == null) return;
+      const rad = (Number(absoluteDeg) || 0) * Math.PI / 180;
+      setFloorRotationOverride(b.id, level, rad);
+      void updateFloorPlan();
+      refreshFloorRotationUi();
+    }
+
+    function addFloorRotationDelta(deltaDeg) {
+      const input = document.getElementById('floor-rotation-input');
+      const current = Number(input.value) || 0;
+      const next = current + (Number(deltaDeg) || 0);
+      // Нормализуем в (-180, 180] для удобства чтения.
+      let norm = ((next + 180) % 360 + 360) % 360 - 180;
+      if (Math.abs(norm - Math.round(norm)) < 0.01) norm = Math.round(norm);
+      input.value = String(norm);
+      applyFloorRotationDegrees(norm);
+    }
+
+    document.querySelectorAll('.floor-rot-step').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        addFloorRotationDelta(Number(btn.dataset.delta));
+      });
+    });
+    document.getElementById('btn-floor-rotation-apply').addEventListener('click', () => {
+      const input = document.getElementById('floor-rotation-input');
+      const v = Number(input.value);
+      if (!Number.isFinite(v)) {
+        appendInfo('В поле «градусов» введите число.', true);
+        return;
+      }
+      applyFloorRotationDegrees(v);
+    });
+    document.getElementById('floor-rotation-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('btn-floor-rotation-apply').click();
+      }
+    });
+    document.getElementById('btn-floor-rotation-reset').addEventListener('click', () => {
+      const { b, level } = getFloorRotationContext();
+      if (!b || level == null) return;
+      setFloorRotationOverride(b.id, level, 0);
+      document.getElementById('floor-rotation-input').value = '0';
+      void updateFloorPlan();
+      refreshFloorRotationUi();
+      appendInfo(`Поворот этажа ${level} в «${b.name}» сброшен.`, false);
     });
 
     document.getElementById('btn-building-rotate-ccw').addEventListener('click', () => {
@@ -4482,6 +4657,7 @@
       if (pathDrawingMode) cancelPathDrawing();
       refreshRoomMarkupUi();
       void updateFloorPlan();
+      refreshFloorRotationUi();
     });
 
     document.getElementById('toggle-floor-plan').addEventListener('change', () => {
@@ -4744,6 +4920,7 @@
     setSelectedBuilding(MODEL_CONFIG.buildings[0]?.id);
     await updateFloorPlan();
     refreshRoomMarkupUi();
+    refreshFloorRotationUi();
     animate();
 
     // Экспорт в window для отладки в консоли
