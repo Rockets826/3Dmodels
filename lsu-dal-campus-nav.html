@@ -665,14 +665,16 @@
         modelScale: 1,
         disabled: false,
         floorPlanLod: true,
-        /** Все этажи развёрнуты на 180° (раньше вход выходил сзади). */
-        floorPlanRotation: { x: 0, y: Math.PI, z: 0 },
+        /** Этажи повёрнуты на 180° по оси X (rotation X = π). */
+        floorPlanRotation: { x: Math.PI, y: 0, z: 0 },
+        /** После X-флипа winding треугольников инвертируется — без DoubleSide стены
+         * могут пропадать «с одной стороны». Включаем для всех этажей. */
+        floorPlanDoubleSide: true,
         floorPlanMatchBuildingFootprint: true,
         floors: [
           { level: 1, modelPath: 'systemaetajey/3k/1fl.glb' },
           { level: 2, modelPath: 'systemaetajey/3k/2fl.glb' },
-          /** 3 этаж экспортирован FrontSide → стены пропадают «с одной стороны»; DoubleSide только тут. */
-          { level: 3, modelPath: 'systemaetajey/3k/3fl.glb', floorPlanLevelDoubleSide: true }
+          { level: 3, modelPath: 'systemaetajey/3k/3fl.glb' }
         ],
         rooms: [
           { id: 'k03-hall', label: 'Холл', floor: 1, local: { x: 0, z: 1 } },
