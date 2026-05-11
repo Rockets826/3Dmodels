@@ -2553,19 +2553,58 @@
       }
 
       // ---- Разные этажи: на каждом этаже идём через свой Холл к лестнице.
+      // ВАЖНО: если на любом из этажей нет Холла или Лестницы — НЕ рисуем линию-заглушку
+      // через всё здание (раньше получалась «диагональ в воздухе»). Просто показываем,
+      // что разметка на нужном этаже неполна.
+      const hallFrom = findHallRoom(b, from.floor);
+      const hallTo = findHallRoom(b, to.floor);
       const sFrom = findStairsRoom(b, from.floor);
       const sTo = findStairsRoom(b, to.floor);
-      if (!sFrom || !sTo) {
-        // Нет лестницы на одном из этажей — рисуем прямую в 3D и сообщаем.
-        const wA = worldFromFloorLocal(b, from.floor, from.room.local);
-        const wB = worldFromFloorLocal(b, to.floor, to.room.local);
-        addLine3D([wA, wB]);
-        hint.textContent = `«${b.name}»: на этаже ${(!sFrom ? from.floor : to.floor)} нет точки «Лестница». Поставьте её, чтобы строить межэтажные маршруты.`;
+      const missing = [];
+      if (!hallFrom) missing.push(`на этаже ${from.floor} нет Холла`);
+      if (!sFrom) missing.push(`на этаже ${from.floor} нет Лестницы`);
+      if (!hallTo) missing.push(`на этаже ${to.floor} нет Холла`);
+      if (!sTo) missing.push(`на этаже ${to.floor} нет Лестницы`);
+      if (missing.length) {
+        hint.textContent =
+          `«${b.name}»: межэтажный маршрут невозможен — ${missing.join('; ')}. ` +
+          `Сначала разметьте Холл и Лестницу на нужных этажах.`;
         ui.appendChild(hint);
         return;
       }
+
       const rA = buildOnFloorRoute(b, from.floor, from.room, sFrom);
       const rB = buildOnFloorRoute(b, to.floor, sTo, to.room);
+
+      // Не рисуем «прямые через здание» если у from/to нет нарисованного corridorPath:
+      // лучше пусть пользователь сам увидит, что путь не нарисован, чем тащить
+      // линию через стены и видеть «странную диагональ».
+      const fromHasPath =
+        String(from.room.id) === String(hallFrom?.id) ||
+        String(from.room.id) === String(sFrom?.id) ||
+        getCorridorPath(from.room).length > 0;
+      const toHasPath =
+        String(to.room.id) === String(hallTo?.id) ||
+        String(to.room.id) === String(sTo?.id) ||
+        getCorridorPath(to.room).length > 0;
+      const sFromHasPath =
+        String(sFrom.id) === String(hallFrom?.id) || getCorridorPath(sFrom).length > 0;
+      const sToHasPath =
+        String(sTo.id) === String(hallTo?.id) || getCorridorPath(sTo).length > 0;
+
+      if (!fromHasPath || !toHasPath || !sFromHasPath || !sToHasPath) {
+        const issues = [];
+        if (!fromHasPath) issues.push(`для «${from.room.label}» (эт. ${from.floor}) не нарисован путь от Холла`);
+        if (!sFromHasPath) issues.push(`для «Лестницы» этажа ${from.floor} не нарисован путь от Холла`);
+        if (!toHasPath) issues.push(`для «${to.room.label}» (эт. ${to.floor}) не нарисован путь от Холла`);
+        if (!sToHasPath) issues.push(`для «Лестницы» этажа ${to.floor} не нарисован путь от Холла`);
+        hint.textContent =
+          `«${b.name}»: межэтажный маршрут не построен — ${issues.join('; ')}. ` +
+          `Откройте эти точки в разметке и нарисуйте ломаную «Путь от Холла».`;
+        ui.appendChild(hint);
+        return;
+      }
+
       const aWorld = rA.points.map((p) => worldFromFloorLocal(b, from.floor, p));
       const bWorld = rB.points.map((p) => worldFromFloorLocal(b, to.floor, p));
       addLine3D(aWorld);
@@ -2575,19 +2614,10 @@
       addVerticalArrowIndicator(stairWorldA.clone().lerp(stairWorldB, 0.5), to.floor > from.floor);
       addLine3D(bWorld);
 
-      const issues = [];
-      if (rA.missingFor === 'hall') issues.push(`на этаже ${from.floor} нет Холла`);
-      if (rA.missingFor === 'from') issues.push(`для «${from.room.label}» нет пути от Холла`);
-      if (rB.missingFor === 'hall') issues.push(`на этаже ${to.floor} нет Холла`);
-      if (rB.missingFor === 'to') issues.push(`для «${to.room.label}» нет пути от Холла`);
-      if (issues.length) {
-        hint.textContent = `«${b.name}»: маршрут с пропусками — ${issues.join('; ')}. Дорисуйте недостающие ломаные.`;
-      } else {
-        hint.textContent =
-          to.floor > from.floor
-            ? `«${b.name}»: ${from.floor}-й → лестница → подъём → ${to.floor}-й.`
-            : `«${b.name}»: ${from.floor}-й → лестница → спуск → ${to.floor}-й.`;
-      }
+      hint.textContent =
+        to.floor > from.floor
+          ? `«${b.name}»: ${from.floor}-й → лестница → подъём → ${to.floor}-й.`
+          : `«${b.name}»: ${from.floor}-й → лестница → спуск → ${to.floor}-й.`;
       ui.appendChild(hint);
     }
 
@@ -2754,13 +2784,19 @@
       const b = currentEditorBuilding();
       sel.innerHTML = '';
       if (!b) return;
-      const rooms = (b.rooms || []).slice().sort((a, z) => {
-        if ((a.floor || 0) !== (z.floor || 0)) return (a.floor || 0) - (z.floor || 0);
-        return String(a.label || '').localeCompare(String(z.label || ''), undefined, { numeric: true });
-      });
+      const floorNow = currentEditorFloor();
+      // Показываем в карточке редактирования ТОЛЬКО точки текущего этажа —
+      // ровно те, что отрисованы на сцене (там тоже фильтр по этажу).
+      // Точки других этажей не «висят» в выпадашке, а появляются только когда
+      // переключишь этаж селектором «Выберите этаж».
+      const rooms = (b.rooms || [])
+        .filter((r) => Number(r.floor) === Number(floorNow))
+        .sort((a, z) => String(a.label || '').localeCompare(String(z.label || ''), undefined, { numeric: true }));
       for (const r of rooms) {
         sel.add(new Option(roomDisplayName(r), r.id));
       }
+      // Если ранее выбранная точка с другого этажа — сбрасываем выбор на первую
+      // точку текущего этажа (или null, если их нет).
       if (selectedRoomMarkupId && rooms.some((r) => r.id === selectedRoomMarkupId)) {
         sel.value = selectedRoomMarkupId;
       } else if (rooms.length) {
@@ -3521,16 +3557,46 @@
       const toSel = document.getElementById('route-to');
       fromSel.innerHTML = '';
       toSel.innerHTML = '';
+      // Группируем опции по «Корпус N — эт. M», чтобы пользователь видел
+      // структуру и не выбирал «случайно» точку с другого этажа/корпуса.
+      const groups = new Map(); // key -> { label, items: [{ id, text, sortKey }] }
       roomIndex.forEach((data, id) => {
-        // Узлы коридора — скрытые якоря для рисования. В выбор маршрута их не пускаем.
         if (roomKindOf(data.room) === 'corridor') return;
         const b = data.building;
-        const text = `${b.name} — эт.${data.floor} — ${data.room.label}`;
-        const o1 = new Option(text, id);
-        const o2 = new Option(text, id);
-        fromSel.add(o1);
-        toSel.add(o2);
+        const key = `${b.id}__${data.floor}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            buildingName: b.name,
+            floor: Number(data.floor) || 1,
+            label: `${b.name} — эт.${data.floor}`,
+            items: []
+          });
+        }
+        groups.get(key).items.push({ id, text: data.room.label, room: data.room });
       });
+      const sorted = [...groups.values()].sort((a, b) => {
+        if (a.buildingName !== b.buildingName) return a.buildingName.localeCompare(b.buildingName, 'ru');
+        return a.floor - b.floor;
+      });
+      const kindOrder = { hall: 0, stairs: 1, room: 2 };
+      for (const g of sorted) {
+        const gFrom = document.createElement('optgroup');
+        const gTo = document.createElement('optgroup');
+        gFrom.label = g.label;
+        gTo.label = g.label;
+        g.items.sort((a, b) => {
+          const ka = kindOrder[roomKindOf(a.room)] ?? 9;
+          const kb = kindOrder[roomKindOf(b.room)] ?? 9;
+          if (ka !== kb) return ka - kb;
+          return String(a.text).localeCompare(String(b.text), 'ru');
+        });
+        for (const it of g.items) {
+          gFrom.appendChild(new Option(it.text, it.id));
+          gTo.appendChild(new Option(it.text, it.id));
+        }
+        fromSel.appendChild(gFrom);
+        toSel.appendChild(gTo);
+      }
     }
 
     async function loadCampus() {
