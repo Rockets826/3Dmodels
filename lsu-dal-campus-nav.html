@@ -2932,7 +2932,7 @@
         } else if (r.missingFor === 'to') {
           hint.textContent = `«${b.name}», этаж ${from.floor}: для точки «${to.room.label}» не нарисован путь от Холла. Откройте её в разметке и нарисуйте ломаную «Путь от Холла».`;
         } else {
-          hint.textContent = `«${b.name}», этаж ${from.floor}: маршрут «${from.room.label}» → Холл → «${to.room.label}» (${r.points.length - 1} сегмент(ов)).`;
+          hint.textContent = `«${b.name}», этаж ${from.floor}: маршрут «${from.room.label}» → «${to.room.label}» (${r.points.length - 1} сегмент(ов)).`;
         }
         ui.appendChild(hint);
         return;
@@ -4013,6 +4013,10 @@
       toSel.innerHTML = '';
       // Группируем опции по «Корпус N — эт. M», чтобы пользователь видел
       // структуру и не выбирал «случайно» точку с другого этажа/корпуса.
+      // ВАЖНО: в «Откуда» попадают ТОЛЬКО Холлы — маршрут всегда начинается
+      // от Холла (это вход в крыло/корпус). Это исключает «странные» маршруты
+      // вида «из аудитории → возврат в Холл → в другую аудиторию» и
+      // соответствует логике corridorPath: путь рисуется ОТ Холла К точке.
       const groups = new Map(); // key -> { label, items: [{ id, text, sortKey }] }
       roomIndex.forEach((data, id) => {
         if (roomKindOf(data.room) === 'corridor') return;
@@ -4034,21 +4038,30 @@
       });
       const kindOrder = { hall: 0, stairs: 1, room: 2 };
       for (const g of sorted) {
-        const gFrom = document.createElement('optgroup');
-        const gTo = document.createElement('optgroup');
-        gFrom.label = g.label;
-        gTo.label = g.label;
-        g.items.sort((a, b) => {
-          const ka = kindOrder[roomKindOf(a.room)] ?? 9;
-          const kb = kindOrder[roomKindOf(b.room)] ?? 9;
-          if (ka !== kb) return ka - kb;
-          return String(a.text).localeCompare(String(b.text), 'ru');
-        });
-        for (const it of g.items) {
-          gFrom.appendChild(new Option(it.text, it.id));
-          gTo.appendChild(new Option(it.text, it.id));
+        // ===== "Откуда": только Холлы этажа.
+        const fromItems = g.items.filter((it) => roomKindOf(it.room) === 'hall');
+        if (fromItems.length) {
+          const gFrom = document.createElement('optgroup');
+          gFrom.label = g.label;
+          fromItems
+            .slice()
+            .sort((a, b) => String(a.text).localeCompare(String(b.text), 'ru'))
+            .forEach((it) => gFrom.appendChild(new Option(it.text, it.id)));
+          fromSel.appendChild(gFrom);
         }
-        fromSel.appendChild(gFrom);
+
+        // ===== "Куда": Холлы, Лестницы, Аудитории (corridor отфильтрован выше).
+        const gTo = document.createElement('optgroup');
+        gTo.label = g.label;
+        g.items
+          .slice()
+          .sort((a, b) => {
+            const ka = kindOrder[roomKindOf(a.room)] ?? 9;
+            const kb = kindOrder[roomKindOf(b.room)] ?? 9;
+            if (ka !== kb) return ka - kb;
+            return String(a.text).localeCompare(String(b.text), 'ru');
+          })
+          .forEach((it) => gTo.appendChild(new Option(it.text, it.id)));
         toSel.appendChild(gTo);
       }
     }
