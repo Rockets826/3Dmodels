@@ -2423,6 +2423,36 @@
       });
     }
 
+    /* ===========================
+       Визуализация маршрута: красивая «дорожка» вместо плоской зелёной линии.
+       Состоит из:
+         - толстой трубы (TubeGeometry) с цветовым градиентом старт→финиш;
+         - маркера старта (зелёный диск + пульсирующее кольцо + указующий конус);
+         - маркера финиша (красный pin: ножка + сфера + пульсирующее кольцо);
+         - стрелочек-конусов направления вдоль пути каждые ~3.5 м;
+         - «бегущей искры», которая едет по маршруту циклически (показывает направление).
+       Все элементы складываются в routeGroup и одной командой удаляются в clearRoute().
+       Анимация (пульсация колец, движение искры) обновляется в animate() через
+       updateRouteAnimations(t).
+       =========================== */
+    // Универсальный масштаб «декораций» маршрута. Меньше — компактнее. 1.0 = крупно.
+    const ROUTE_VISUAL_SCALE = 0.5;
+    const RVS = ROUTE_VISUAL_SCALE;
+
+    const routeAnimation = {
+      segments: [],        // { a:Vector3, b:Vector3, len:number, mesh, ball }
+      totalLength: 0,
+      pulseMeshes: [],     // меши, у которых userData.routePulse — параметры пульсации
+      spark: null          // движущаяся вдоль маршрута сфера
+    };
+
+    function resetRouteAnimation() {
+      routeAnimation.segments.length = 0;
+      routeAnimation.totalLength = 0;
+      routeAnimation.pulseMeshes.length = 0;
+      routeAnimation.spark = null;
+    }
+
     function clearRoute() {
       while (routeGroup.children.length) {
         const c = routeGroup.children[0];
@@ -2435,23 +2465,254 @@
         disposeSubtree(c);
       }
       document.querySelectorAll('.route-hint').forEach((el) => el.remove());
+      resetRouteAnimation();
     }
 
-    function lineMaterial(color) {
-      return new THREE.LineBasicMaterial({ color, linewidth: 1 });
+    // Плавный градиент по прогрессу t∈[0..1]: зелёный → жёлтый → красный.
+    function routeColorAt(t) {
+      const c = new THREE.Color();
+      const clamped = THREE.MathUtils.clamp(t, 0, 1);
+      // HSL: 0.39 (зелёный ~140°) → 0.0 (красный 0°), яркая насыщенность.
+      const h = 0.39 * (1 - clamped) + 0.0 * clamped;
+      c.setHSL(h, 0.8, 0.5);
+      return c;
     }
 
     function addLine3D(points) {
-      const geo = new THREE.BufferGeometry().setFromPoints(points);
-      const line = new THREE.Line(geo, lineMaterial(0x22c55e));
-      routeGroup.add(line);
+      if (!Array.isArray(points) || points.length < 2) return;
+      for (let i = 0; i < points.length - 1; i++) {
+        const a = points[i].clone ? points[i].clone() : new THREE.Vector3().copy(points[i]);
+        const b = points[i + 1].clone ? points[i + 1].clone() : new THREE.Vector3().copy(points[i + 1]);
+        const len = a.distanceTo(b);
+        if (len < 1e-4) continue;
+
+        // Труба-сегмент. MeshBasicMaterial не зависит от освещения — маршрут
+        // одинаково яркий и в тёмном углу здания, и снаружи на ярком солнце.
+        const curve = new THREE.LineCurve3(a, b);
+        const tubeGeo = new THREE.TubeGeometry(curve, 1, 0.15 * RVS, 12, false);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+        const mesh = new THREE.Mesh(tubeGeo, mat);
+        mesh.renderOrder = 200;
+        routeGroup.add(mesh);
+
+        // Сглаживающая сфера в каждой точке a — закрывает стык между сегментами.
+        const ballMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(0.18 * RVS, 14, 14), ballMat);
+        ball.position.copy(a);
+        ball.renderOrder = 200;
+        routeGroup.add(ball);
+
+        routeAnimation.segments.push({ a, b, len, mesh, ball });
+        routeAnimation.totalLength += len;
+      }
     }
 
-    function addLine2DOnFloor(localPoints) {
-      const pts = localPoints.map((p) => new THREE.Vector3(p.x, 0.06, p.z));
-      const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      const line = new THREE.Line(geo, lineMaterial(0x22c55e));
-      floorRouteGroup.add(line);
+    // Вычислить точку на маршруте по нормированному t∈[0..1] (для бегущей искры).
+    function samplePathAt(t) {
+      const segs = routeAnimation.segments;
+      if (!segs.length || routeAnimation.totalLength <= 0) return null;
+      const target = THREE.MathUtils.clamp(t, 0, 1) * routeAnimation.totalLength;
+      let acc = 0;
+      for (const seg of segs) {
+        if (target <= acc + seg.len) {
+          const local = (target - acc) / seg.len;
+          return new THREE.Vector3().lerpVectors(seg.a, seg.b, local);
+        }
+        acc += seg.len;
+      }
+      return segs[segs.length - 1].b.clone();
+    }
+
+    // Маркер старта: зелёный диск + пульсирующее кольцо + вертикальный конус-указатель.
+    function makeStartMarker(pos) {
+      const g = new THREE.Group();
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.55 * RVS, 28),
+        new THREE.MeshBasicMaterial({
+          color: 0x22c55e, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+          depthWrite: false
+        })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.y = 0.02;
+      disc.renderOrder = 201;
+      g.add(disc);
+
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.55 * RVS, 0.78 * RVS, 36),
+        new THREE.MeshBasicMaterial({
+          color: 0x22c55e, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
+          depthWrite: false
+        })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.04;
+      ring.renderOrder = 202;
+      ring.userData.routePulse = { base: 1, amp: 0.35, freq: 0.004, opBase: 0.85, opAmp: 0.45 };
+      routeAnimation.pulseMeshes.push(ring);
+      g.add(ring);
+
+      // Конус, направленный остриём вниз, парит над точкой — «вот тут начало».
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(0.28 * RVS, 0.9 * RVS, 16),
+        new THREE.MeshBasicMaterial({ color: 0x16a34a })
+      );
+      const coneBaseY = 1.1 * RVS;
+      cone.position.y = coneBaseY;
+      cone.rotation.x = Math.PI;
+      cone.renderOrder = 202;
+      cone.userData.routePulse = { base: 1, amp: 0.08, freq: 0.005, posBase: coneBaseY, posAmp: 0.12 * RVS };
+      routeAnimation.pulseMeshes.push(cone);
+      g.add(cone);
+
+      g.position.copy(pos);
+      return g;
+    }
+
+    // Маркер финиша: красный «map-pin» (ножка + сфера) + пульсирующее кольцо.
+    function makeFinishMarker(pos) {
+      const g = new THREE.Group();
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.55 * RVS, 28),
+        new THREE.MeshBasicMaterial({
+          color: 0xef4444, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+          depthWrite: false
+        })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      disc.position.y = 0.02;
+      disc.renderOrder = 201;
+      g.add(disc);
+
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.55 * RVS, 0.78 * RVS, 36),
+        new THREE.MeshBasicMaterial({
+          color: 0xef4444, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+          depthWrite: false
+        })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.05;
+      ring.renderOrder = 202;
+      ring.userData.routePulse = { base: 1, amp: 0.45, freq: 0.005, opBase: 0.9, opAmp: 0.5 };
+      routeAnimation.pulseMeshes.push(ring);
+      g.add(ring);
+
+      // Pin: тонкая ножка + шарик-«голова» сверху.
+      const stemH = 1.5 * RVS;
+      const stem = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05 * RVS, 0.05 * RVS, stemH, 12),
+        new THREE.MeshBasicMaterial({ color: 0xef4444 })
+      );
+      stem.position.y = stemH / 2;
+      stem.renderOrder = 202;
+      g.add(stem);
+
+      const headY = stemH + 0.15 * RVS;
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.3 * RVS, 18, 18),
+        new THREE.MeshBasicMaterial({ color: 0xef4444 })
+      );
+      head.position.y = headY;
+      head.renderOrder = 202;
+      head.userData.routePulse = { base: 1, amp: 0.12, freq: 0.006, posBase: headY, posAmp: 0.08 * RVS };
+      routeAnimation.pulseMeshes.push(head);
+      g.add(head);
+
+      g.position.copy(pos);
+      return g;
+    }
+
+    // Стрелочки-конусы вдоль трубы — показывают направление движения.
+    function addDirectionArrowsAlongRoute() {
+      // Шаг между стрелочками тоже уменьшаем при компактном масштабе,
+      // иначе при коротких маршрутах стрелочек почти не будет.
+      const step = Math.max(1.4, 3.5 * RVS * 1.5);
+      let acc = 0;
+      for (const seg of routeAnimation.segments) {
+        if (seg.len < 0.4) { acc += seg.len; continue; }
+        const dir = new THREE.Vector3().subVectors(seg.b, seg.a).normalize();
+        // Старт первой стрелки в этом сегменте — выровнен по глобальной шкале.
+        let dist = step - (acc % step);
+        if (dist < 0.2) dist += step;
+        while (dist < seg.len - 0.2) {
+          const pos = new THREE.Vector3().copy(seg.a).addScaledVector(dir, dist);
+          const cone = new THREE.Mesh(
+            new THREE.ConeGeometry(0.16 * RVS, 0.5 * RVS, 12),
+            new THREE.MeshBasicMaterial({ color: 0xffffff })
+          );
+          cone.position.copy(pos);
+          cone.position.y += 0.05;
+          cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+          cone.renderOrder = 203;
+          routeGroup.add(cone);
+          dist += step;
+        }
+        acc += seg.len;
+      }
+    }
+
+    // «Бегущая искра» — анимированная сфера, циклически едущая вдоль маршрута.
+    function makeRouteSpark() {
+      const spark = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22 * RVS, 18, 18),
+        new THREE.MeshBasicMaterial({ color: 0xfde047, transparent: true, opacity: 1.0 })
+      );
+      spark.renderOrder = 204;
+      routeGroup.add(spark);
+      routeAnimation.spark = spark;
+    }
+
+    // Финализируем визуализацию маршрута: цвета сегментов по градиенту, маркеры,
+    // стрелочки и бегущая искра. Вызывается ОДИН раз в конце buildRoute().
+    function finalizeRouteVisuals() {
+      const segs = routeAnimation.segments;
+      if (!segs.length || routeAnimation.totalLength <= 0) return;
+
+      // Применяем градиент к каждому сегменту по его средней позиции на маршруте.
+      let acc = 0;
+      for (const seg of segs) {
+        const tMid = (acc + seg.len / 2) / routeAnimation.totalLength;
+        const col = routeColorAt(tMid);
+        if (seg.mesh?.material?.color) seg.mesh.material.color.copy(col);
+        // Сфера-стык — окрашиваем в цвет начала сегмента (плавный переход стыков).
+        const tStart = acc / routeAnimation.totalLength;
+        const colStart = routeColorAt(tStart);
+        if (seg.ball?.material?.color) seg.ball.material.color.copy(colStart);
+        acc += seg.len;
+      }
+
+      routeGroup.add(makeStartMarker(segs[0].a));
+      routeGroup.add(makeFinishMarker(segs[segs.length - 1].b));
+      addDirectionArrowsAlongRoute();
+      makeRouteSpark();
+    }
+
+    // Анимация: пульсация колец и pin-head, движение искры. Дёргается из animate().
+    function updateRouteAnimations(t) {
+      if (!routeAnimation.segments.length) return;
+      for (const m of routeAnimation.pulseMeshes) {
+        const p = m.userData.routePulse;
+        if (!p) continue;
+        const phase = Math.sin(t * p.freq);
+        const k = p.base + p.amp * phase;
+        m.scale.set(k, k, m.scale.z || 1);
+        if (p.opBase != null && m.material && 'opacity' in m.material) {
+          m.material.opacity = THREE.MathUtils.clamp(p.opBase - p.opAmp * phase, 0.05, 1);
+        }
+        if (p.posBase != null) {
+          m.position.y = p.posBase + p.posAmp * phase;
+        }
+      }
+      if (routeAnimation.spark) {
+        // Полный цикл по маршруту — 4 секунды.
+        const tt = (t % 4000) / 4000;
+        const pos = samplePathAt(tt);
+        if (pos) routeAnimation.spark.position.copy(pos);
+        // Лёгкий fade-in на старте и fade-out у финиша, чтобы перескок не резал глаз.
+        const edge = Math.min(tt, 1 - tt) * 6;
+        routeAnimation.spark.material.opacity = THREE.MathUtils.clamp(edge, 0.35, 1);
+      }
     }
 
     function syncFloorRouteGroupPosition(building) {
@@ -2634,14 +2895,15 @@
       const hint = document.createElement('div');
       hint.className = 'route-hint';
 
-      // ---- Между корпусами: прямая по кампусу (как раньше).
+      // ---- Между корпусами: прямая по кампусу от входа к входу.
       if (from.buildingId !== to.buildingId) {
         const bA = buildingDataById.get(from.buildingId);
         const bB = buildingDataById.get(to.buildingId);
         const pA = new THREE.Vector3(bA.entranceWorld.x, bA.entranceWorld.y, bA.entranceWorld.z);
         const pB = new THREE.Vector3(bB.entranceWorld.x, bB.entranceWorld.y, bB.entranceWorld.z);
         addLine3D([pA, pB]);
-        hint.textContent = `Между корпусами: зелёная линия по кампусу от входа к входу. Внутри зданий используйте схемы этажей.`;
+        finalizeRouteVisuals();
+        hint.textContent = `Между корпусами: дорожка по кампусу от входа к входу. Внутри зданий используйте схемы этажей.`;
         ui.appendChild(hint);
         return;
       }
@@ -2654,7 +2916,10 @@
         const r = buildOnFloorRoute(b, from.floor, from.room, to.room);
         // Рисуем в 3D, чтобы маршрут был виден даже если в селекторе открыт другой этаж.
         const worldPts = r.points.map((p) => worldFromFloorLocal(b, from.floor, p));
-        if (worldPts.length > 1) addLine3D(worldPts);
+        if (worldPts.length > 1) {
+          addLine3D(worldPts);
+          finalizeRouteVisuals();
+        }
         if (r.missingFor === 'hall') {
           hint.textContent = `«${b.name}», этаж ${from.floor}: на этом этаже не отмечен Холл (тип «Холл»). Поставьте точку «Холл» — это начало всех маршрутов этажа.`;
         } else if (r.missingFor === 'differentWings') {
@@ -2728,12 +2993,16 @@
 
       const aWorld = rA.points.map((p) => worldFromFloorLocal(b, from.floor, p));
       const bWorld = rB.points.map((p) => worldFromFloorLocal(b, to.floor, p));
-      addLine3D(aWorld);
+      // Склеиваем в одну непрерывную дорожку: путь по этажу from → вертикальный
+      // переход через лестницу → путь по этажу to. Передаём ОДНИМ вызовом —
+      // тогда маркер старта/финиша и градиент будут на ВСЁМ маршруте, а не на каждом куске.
       const stairWorldA = aWorld[aWorld.length - 1];
       const stairWorldB = bWorld[0];
-      addLine3D([stairWorldA, stairWorldB]);
+      const allPts = [...aWorld, stairWorldB, ...bWorld.slice(1)];
+      addLine3D(allPts);
+      // Маленький конус-индикатор «вверх/вниз» на середине лестницы — подсказка-этикетка.
       addVerticalArrowIndicator(stairWorldA.clone().lerp(stairWorldB, 0.5), to.floor > from.floor);
-      addLine3D(bWorld);
+      finalizeRouteVisuals();
 
       hint.textContent =
         to.floor > from.floor
@@ -5226,6 +5495,7 @@
       requestAnimationFrame(animate);
       TWEEN.update(t);
       controls.update();
+      updateRouteAnimations(t);
       applyFloorInteriorLod();
       if (
         transformControls.visible &&
