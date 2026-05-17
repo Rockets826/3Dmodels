@@ -566,6 +566,7 @@
           </div>
           <div class="row" style="gap:8px;flex-wrap:wrap;">
             <button type="button" id="btn-room-export">Экспорт JSON</button>
+            <button type="button" id="btn-room-export-all-backup" class="ghost" title="Скачать разметку всех корпусов для database/exports/room-markup-backup.json">Скачать backup для репозитория</button>
             <button type="button" id="btn-room-import" class="ghost">Импорт JSON</button>
             <button type="button" id="btn-room-clear-all" class="ghost" title="Удалить все точки этого корпуса">Очистить корпус</button>
             <button type="button" id="btn-room-clear-everything" class="ghost" title="Удалить точки во ВСЕХ корпусах (с опцией оставить только текущий)">Очистить все корпуса…</button>
@@ -1122,6 +1123,11 @@
       CAMPUS_LAYOUT_STORAGE_KEY: 'lsu-dal-campus-nav-building-layout-v5-siniy-sk',
       /** Черновая разметка аудиторий (id/label/floor/local) в localStorage. */
       ROOM_MARKUP_STORAGE_KEY: 'lsu-dal-campus-nav-room-markup-v1',
+      /**
+       * Эталонная разметка в репозитории (JSON). Подгружается при старте; localStorage
+       * поверх неё — личные правки в браузере. Положите сюда файл из «Скачать backup…».
+       */
+      ROOM_MARKUP_BACKUP_PATH: 'database/exports/room-markup-backup.json',
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
       FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
       /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
@@ -3081,39 +3087,7 @@
       };
     }
 
-    function applyPersistedRoomMarkup() {
-      let migrated = false;
-      try {
-        const raw = localStorage.getItem(roomMarkupStorageKey());
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return;
-        for (const b of MODEL_CONFIG.buildings) {
-          const list = parsed[b.id];
-          if (!Array.isArray(list)) continue;
-          const before = list.length;
-          const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
-          if (normalized.length !== before) migrated = true;
-          // localStorage авторитетен: если для корпуса сохранён массив (даже пустой) —
-          // он полностью перезаписывает хардкод-дефолты из MODEL_CONFIG.
-          // Это нужно, чтобы после «Очистить все корпуса…» дефолтные Холл/Лестница
-          // не «воскресали» при перезагрузке страницы.
-          b.rooms = normalized;
-        }
-      } catch (err) {
-        console.warn('[LSU Nav] Не удалось прочитать разметку аудиторий из localStorage', err);
-      }
-      // Если что-то отфильтровали (например, старые waypoints удаляются новой системой),
-      // сразу перезапишем storage, чтобы мусор не оставался.
-      if (migrated) {
-        try {
-          savePersistedRoomMarkup();
-          console.log('[LSU Nav] Разметка аудиторий мигрирована: устаревшие записи удалены.');
-        } catch (_) {}
-      }
-    }
-
-    function savePersistedRoomMarkup() {
+    function roomMarkupPayloadFromBuildings() {
       const payload = {};
       for (const b of MODEL_CONFIG.buildings) {
         payload[b.id] = (b.rooms || [])
@@ -3132,6 +3106,96 @@
               : {})
           }));
       }
+      return payload;
+    }
+
+    /** Применить объект { buildingId: [rooms…] } к MODEL_CONFIG.buildings. */
+    function applyRoomMarkupPayload(parsed, sourceLabel) {
+      if (!parsed || typeof parsed !== 'object') return { migrated: false, applied: 0 };
+      let migrated = false;
+      let applied = 0;
+      for (const b of MODEL_CONFIG.buildings) {
+        const list = parsed[b.id];
+        if (!Array.isArray(list)) continue;
+        const before = list.length;
+        const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
+        if (normalized.length !== before) migrated = true;
+        b.rooms = normalized;
+        applied++;
+      }
+      if (applied && sourceLabel) {
+        console.log(`[LSU Nav] Разметка из ${sourceLabel}: обновлено корпусов — ${applied}.`);
+      }
+      return { migrated, applied };
+    }
+
+    async function loadRoomMarkupFromRepoBackup() {
+      const path = MODEL_CONFIG.ROOM_MARKUP_BACKUP_PATH;
+      if (!path) return null;
+      try {
+        const url = new URL(path, window.location.href).href;
+        const res = await fetch(url, { cache: 'no-cache' });
+        if (!res.ok) {
+          console.info(
+            `[LSU Nav] Backup разметки не найден (${path}, HTTP ${res.status}). ` +
+              'Скачайте «backup для репозитория» и положите файл в database/exports/.'
+          );
+          return null;
+        }
+        const parsed = await res.json();
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось загрузить backup разметки из репозитория', err);
+        return null;
+      }
+    }
+
+    /**
+     * Порядок: 1) JSON в репозитории (эталон для git clone);
+     * 2) localStorage браузера (личные правки поверх эталона).
+     */
+    async function applyPersistedRoomMarkup() {
+      let migrated = false;
+      const backup = await loadRoomMarkupFromRepoBackup();
+      if (backup) {
+        const r = applyRoomMarkupPayload(backup, 'репозитория');
+        migrated = migrated || r.migrated;
+      }
+      try {
+        const raw = localStorage.getItem(roomMarkupStorageKey());
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const r = applyRoomMarkupPayload(parsed, 'localStorage');
+          migrated = migrated || r.migrated;
+        }
+      } catch (err) {
+        console.warn('[LSU Nav] Не удалось прочитать разметку аудиторий из localStorage', err);
+      }
+      if (migrated) {
+        try {
+          savePersistedRoomMarkup();
+          console.log('[LSU Nav] Разметка аудиторий мигрирована: устаревшие записи удалены.');
+        } catch (_) {}
+      }
+    }
+
+    /** Скачать полный backup всех корпусов — сохранить как database/exports/room-markup-backup.json */
+    function downloadRoomMarkupRepoBackup() {
+      const payload = roomMarkupPayloadFromBuildings();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'room-markup-backup.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      appendInfo(
+        'Скачан room-markup-backup.json — положите его в папку database/exports/ в проекте и закоммитьте в git.',
+        false
+      );
+    }
+
+    function savePersistedRoomMarkup() {
+      const payload = roomMarkupPayloadFromBuildings();
       try {
         localStorage.setItem(roomMarkupStorageKey(), JSON.stringify(payload));
       } catch (err) {
@@ -4080,7 +4144,7 @@
           MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && anyBuildingHasManualFloorToggle()
         );
       }
-      applyPersistedRoomMarkup();
+      await applyPersistedRoomMarkup();
       indexRooms();
       await loadDistrictMapIfConfigured();
       const palette = [0x8b9dc3, 0xa68bc4, 0x7eb8da];
@@ -5313,6 +5377,9 @@
     });
     document.getElementById('btn-room-export').addEventListener('click', () => {
       exportRoomsOfCurrentBuilding();
+    });
+    document.getElementById('btn-room-export-all-backup').addEventListener('click', () => {
+      downloadRoomMarkupRepoBackup();
     });
     document.getElementById('btn-room-import').addEventListener('click', () => {
       importRoomsToCurrentBuilding();
