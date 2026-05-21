@@ -117,7 +117,10 @@
     }
     .room-markup-label.kind-hall { color: #86efac; border-color: rgba(34, 197, 94, 0.35); }
     .room-markup-label.kind-stairs { color: #fde047; border-color: rgba(234, 179, 8, 0.35); }
+    .room-markup-label.kind-entrance { color: #93c5fd; border-color: rgba(59, 130, 246, 0.35); }
+    .room-markup-label.kind-emergency_exit { color: #86efac; border-color: rgba(34, 197, 94, 0.4); }
     .room-markup-label.kind-room { color: #c7d2fe; }
+    .room-markup-label.has-icon { margin-top: 2px; font-size: 10px; }
     .room-markup-label.is-selected {
       background: rgba(29, 78, 216, 0.85);
       border-color: rgba(147, 197, 253, 0.6);
@@ -557,7 +560,9 @@
               <select id="room-edit-type">
                 <option value="room">Аудитория/точка</option>
                 <option value="hall">Холл</option>
-                <option value="stairs">Лестница</option>
+                <option value="entrance">Вход</option>
+                <option value="emergency_exit">Экстренный выход</option>
+                <option value="stairs">Лестница (маршрут между этажами)</option>
                 <option value="corridor">Узел коридора (скрытый якорь)</option>
               </select>
             </div>
@@ -600,7 +605,7 @@
             <button type="button" id="btn-room-clear-all" class="ghost" title="Удалить все точки этого корпуса">Очистить корпус</button>
             <button type="button" id="btn-room-clear-everything" class="ghost" title="Удалить точки во ВСЕХ корпусах (с опцией оставить только текущий)">Очистить все корпуса…</button>
           </div>
-          <p class="hint" style="margin:0;">Видны точки только текущего этажа (переключите этаж селектором выше). Камера в режиме разметки <strong>не вращается</strong> — выключите режим, чтобы покрутить.</p>
+          <p class="hint" style="margin:0;">Видны точки только текущего этажа (переключите этаж селектором выше). Типы <strong>Вход</strong>, <strong>Экстренный выход</strong> и <strong>Лестница</strong> показываются значками на плане. Камера в режиме разметки <strong>не вращается</strong> — выключите режим, чтобы покрутить.</p>
         </div>
       </div>
     </div>
@@ -1157,6 +1162,8 @@
        * поверх неё — личные правки в браузере. Положите сюда файл из «Скачать backup…».
        */
       ROOM_MARKUP_BACKUP_PATH: 'database/exports/room-markup-backup.json',
+      /** Размер значка входа / выхода / лестницы на плане этажа (усл. метры). */
+      MARKER_ICON_WORLD_SCALE: 0.62,
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
       FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
       /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
@@ -3070,6 +3077,201 @@
       return MODEL_CONFIG.ROOM_MARKUP_STORAGE_KEY || 'lsu-dal-campus-nav-room-markup-v1';
     }
 
+    const MARKUP_KINDS = [
+      'room',
+      'hall',
+      'stairs',
+      'corridor',
+      'entrance',
+      'emergency_exit'
+    ];
+
+    function isMarkerIconKind(kind) {
+      return kind === 'entrance' || kind === 'emergency_exit' || kind === 'stairs';
+    }
+
+    /** Только обозначения на плане, не участвуют в построении маршрута. */
+    function isSignageOnlyKind(kind) {
+      return kind === 'entrance' || kind === 'emergency_exit';
+    }
+
+    /** Угадываем тип по подписи, если в JSON осталось kind: "room". */
+    function inferSignageKindFromLabel(label, storedKind) {
+      const k = String(storedKind || '').trim().toLowerCase();
+      if (k === 'hall' || k === 'corridor') return k;
+      if (k === 'entrance' || k === 'emergency_exit' || k === 'stairs') return k;
+      const low = String(label || '').trim().toLowerCase();
+      if (/экстрен|эвакуац|аварийн\w*\s*выход|выход\s*эвак|знак\s*безопасн/i.test(low)) {
+        return 'emergency_exit';
+      }
+      if (/(главн\w*\s+)?вход\b|парадн\w*\s+вход|центральн\w*\s+вход|\bвход[\s,.-]/i.test(low)) {
+        return 'entrance';
+      }
+      if (/\bлестниц/i.test(low)) return 'stairs';
+      return k || 'room';
+    }
+
+    const markerIconTextures = {
+      entrance: null,
+      emergency_exit: null,
+      stairs: null
+    };
+    let markerTexturesReady = false;
+
+    function makeMarkerCanvasTexture(drawFn, size = 128) {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) drawFn(ctx, size);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    function fillRoundRect(ctx, x, y, w, h, rad) {
+      const r = Math.min(rad, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawEntranceMarker(ctx, size) {
+      ctx.clearRect(0, 0, size, size);
+      const pad = size * 0.1;
+      const r = size * 0.12;
+      ctx.fillStyle = '#3b82f6';
+      fillRoundRect(ctx, pad, pad, size - pad * 2, size - pad * 2, r);
+      ctx.fillStyle = '#ffffff';
+      const doorW = size * 0.34;
+      const doorH = size * 0.52;
+      const doorX = size * 0.22;
+      const doorY = size * 0.24;
+      ctx.fillRect(doorX, doorY, doorW, doorH);
+      ctx.beginPath();
+      ctx.moveTo(doorX + doorW + size * 0.06, doorY + doorH * 0.55);
+      ctx.lineTo(doorX + doorW + size * 0.22, doorY + doorH * 0.38);
+      ctx.lineTo(doorX + doorW + size * 0.22, doorY + doorH * 0.72);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawStairsMarker(ctx, size) {
+      ctx.clearRect(0, 0, size, size);
+      const pad = size * 0.12;
+      ctx.fillStyle = '#f59e0b';
+      fillRoundRect(ctx, pad, pad, size - pad * 2, size - pad * 2, size * 0.1);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = size * 0.07;
+      ctx.lineCap = 'round';
+      const steps = 4;
+      const w = size * 0.62;
+      const h = size * 0.52;
+      const x0 = size * 0.19;
+      const y0 = size * 0.58;
+      for (let i = 0; i < steps; i++) {
+        const t = i / (steps - 1);
+        const x1 = x0 + w * t;
+        const y1 = y0 - h * t;
+        const x2 = x0 + w * (i + 1) / (steps - 1);
+        const y2 = y0 - h * ((i + 1) / (steps - 1));
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+    }
+
+    function drawEmergencyExitFallback(ctx, size) {
+      ctx.clearRect(0, 0, size, size);
+      const pad = size * 0.08;
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(pad, pad, size - pad * 2, size - pad * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(size * 0.58, size * 0.22, size * 0.22, size * 0.56);
+      ctx.fillStyle = '#22c55e';
+      ctx.beginPath();
+      ctx.arc(size * 0.38, size * 0.55, size * 0.11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(size * 0.44, size * 0.48);
+      ctx.lineTo(size * 0.56, size * 0.55);
+      ctx.lineTo(size * 0.44, size * 0.62);
+      ctx.closePath();
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+    }
+
+    function loadMarkerIconTextures() {
+      markerIconTextures.entrance = makeMarkerCanvasTexture(drawEntranceMarker);
+      markerIconTextures.stairs = makeMarkerCanvasTexture(drawStairsMarker);
+      markerIconTextures.emergency_exit = makeMarkerCanvasTexture(drawEmergencyExitFallback);
+      const loader = new THREE.TextureLoader();
+      const url = resolveModelPath('assets/markers/emergency-exit.png');
+      loader.load(
+        url,
+        (tex) => {
+          tex.colorSpace = THREE.SRGBColorSpace;
+          if (markerIconTextures.emergency_exit?.dispose) {
+            markerIconTextures.emergency_exit.dispose();
+          }
+          markerIconTextures.emergency_exit = tex;
+          if (isFloorPlanActiveForMarkup()) refreshRoomMarkupVisuals();
+        },
+        undefined,
+        () => {
+          console.warn('[LSU Nav] PNG экстренного выхода не найден, запасной значок');
+        }
+      );
+      markerTexturesReady = true;
+    }
+
+    function markerIconWorldScale() {
+      return Number(MODEL_CONFIG.MARKER_ICON_WORLD_SCALE) || 0.62;
+    }
+
+    function attachRoomMarkupIcon(group, kind, isSelected) {
+      const tex = markerIconTextures[kind];
+      if (!tex) return;
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        opacity: isSelected ? 1 : 0.96
+      });
+      const sprite = new THREE.Sprite(mat);
+      const s = markerIconWorldScale();
+      sprite.scale.set(s, s, 1);
+      sprite.position.y = s * 0.38;
+      sprite.renderOrder = 12;
+      sprite.userData.isMarkupIcon = true;
+      group.add(sprite);
+      if (isSelected) {
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(s * 0.42, s * 0.52, 32),
+          new THREE.MeshBasicMaterial({
+            color: 0x3b82f6,
+            transparent: true,
+            opacity: 0.85,
+            side: THREE.DoubleSide,
+            depthTest: false
+          })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.03;
+        ring.renderOrder = 11;
+        group.add(ring);
+      }
+    }
+
     function sanitizeRoomRecord(r) {
       if (!r || typeof r !== 'object') return null;
       const id = String(r.id || '').trim();
@@ -3085,11 +3287,13 @@
       // Старые 'waypoint' (узлы коридора) — выкидываем: новая система маршрутов их не использует.
       let kind = String(r.kind || '').trim().toLowerCase();
       if (kind === 'waypoint') return null;
-      if (kind !== 'room' && kind !== 'hall' && kind !== 'stairs' && kind !== 'corridor') {
+      if (!MARKUP_KINDS.includes(kind)) {
         if (r.isStairs === true) kind = 'stairs';
         else if (label.toLowerCase().includes('холл')) kind = 'hall';
         else kind = 'room';
       }
+      if (r.isStairs === true) kind = 'stairs';
+      kind = inferSignageKindFromLabel(label, kind);
       // corridorPath — ломаная «Холл этажа → эта точка» в локальных XZ координатах плана.
       // Используется в новой ручной системе маршрутов.
       let corridorPath = [];
@@ -3149,7 +3353,10 @@
         const before = list.length;
         const normalized = list.map(sanitizeRoomRecord).filter(Boolean);
         if (normalized.length !== before) migrated = true;
+        const kindsBefore = JSON.stringify((b.rooms || []).map((x) => x.kind));
         b.rooms = normalized;
+        const kindsAfter = JSON.stringify(b.rooms.map((x) => x.kind));
+        if (kindsBefore !== kindsAfter) migrated = true;
         applied++;
       }
       if (applied && sourceLabel) {
@@ -3257,30 +3464,42 @@
     /** Подпись над «крупной» точкой разметки (не corridor). */
     function attachRoomMarkupLabel(group, r, kind, isSelected, viewOnly) {
       const div = document.createElement('div');
+      const withIcon = isMarkerIconKind(kind);
       div.className = `room-markup-label kind-${kind}${isSelected ? ' is-selected' : ''}${
         viewOnly ? ' view-only' : ''
-      }`;
+      }${withIcon ? ' has-icon' : ''}`;
       div.textContent = r.label || r.id;
       const label = new CSS2DObject(div);
-      label.position.set(0, viewOnly ? 0.28 : 0.32, 0);
+      const iconLift = withIcon ? markerIconWorldScale() * 0.55 : 0;
+      label.position.set(0, (viewOnly ? 0.12 : 0.16) + iconLift, 0);
       label.renderOrder = 10;
       group.add(label);
     }
 
     function roomKindOf(r) {
-      const k = String(r?.kind || '').toLowerCase();
-      if (k === 'stairs' || k === 'hall' || k === 'room' || k === 'corridor') return k;
       if (r?.isStairs) return 'stairs';
-      const low = String(r?.label || '').toLowerCase();
-      if (low.includes('холл')) return 'hall';
-      return 'room';
+      const k = String(r?.kind || '').trim().toLowerCase();
+      if (k === 'waypoint') return 'corridor';
+      if (k === 'hall' || k === 'corridor') return k;
+      return inferSignageKindFromLabel(r?.label, k);
     }
 
     function roomColorForKind(kind) {
       if (kind === 'stairs') return 0xf59e0b;
+      if (kind === 'entrance') return 0x3b82f6;
+      if (kind === 'emergency_exit') return 0x22c55e;
       if (kind === 'hall') return 0x67e8f9;
-      if (kind === 'corridor') return 0x94a3b8; // серый — скрытый якорь для рисования
+      if (kind === 'corridor') return 0x94a3b8;
       return 0x34d399;
+    }
+
+    function roomKindDisplayName(kind) {
+      if (kind === 'hall') return 'Холл';
+      if (kind === 'stairs') return 'Лестница';
+      if (kind === 'entrance') return 'Вход';
+      if (kind === 'emergency_exit') return 'Экстренный выход';
+      if (kind === 'corridor') return 'Узел коридора';
+      return '';
     }
 
     function currentEditorBuilding() {
@@ -3294,7 +3513,12 @@
     }
 
     function roomDisplayName(r) {
-      const prefix = r.isStairs ? 'Лестница' : String(r.label || '');
+      const kind = roomKindOf(r);
+      const typeTag = roomKindDisplayName(kind);
+      const name = String(r.label || r.id || '');
+      const prefix = typeTag && !name.toLowerCase().startsWith(typeTag.toLowerCase())
+        ? `${typeTag}: ${name}`
+        : name;
       return `${prefix} (эт.${r.floor})`;
     }
 
@@ -3363,8 +3587,10 @@
         if (enabled) {
           const floorOfPoint = Number(r.floor) || 1;
           const halls = findHallsOfFloor(b, floorOfPoint).filter((h) => h.id !== r.id);
-          const isHallItself = roomKindOf(r) === 'hall';
-          if (isHallItself) {
+          const storedKind = String(r.kind || '').trim().toLowerCase();
+          const rk = MARKUP_KINDS.includes(storedKind) ? storedKind : roomKindOf(r);
+          const isHallItself = rk === 'hall';
+          if (isHallItself || isSignageOnlyKind(rk)) {
             hallWrap.hidden = true;
           } else {
             hallWrap.hidden = false;
@@ -3396,7 +3622,10 @@
       }
       label.value = r.label || '';
       floor.value = String(r.floor || 1);
-      type.value = r.isStairs ? 'stairs' : roomKindOf(r);
+      // Явно сохранённый kind важнее угадывания по подписи (иначе «Вход» в списке сбрасывается).
+      const storedKind = String(r.kind || '').trim().toLowerCase();
+      type.value =
+        MARKUP_KINDS.includes(storedKind) ? storedKind : roomKindOf(r);
       if (xInp) xInp.value = Number(r.local?.x ?? 0).toFixed(2);
       if (zInp) zInp.value = Number(r.local?.z ?? 0).toFixed(2);
     }
@@ -3412,7 +3641,14 @@
       const editMode = roomMarkupMode;
 
       if (editMode) {
-        const counts = { room: 0, hall: 0, stairs: 0, corridor: 0 };
+        const counts = {
+          room: 0,
+          hall: 0,
+          stairs: 0,
+          corridor: 0,
+          entrance: 0,
+          emergency_exit: 0
+        };
         let withPath = 0;
         for (const r of b.rooms || []) {
           if (Number(r.floor) !== Number(floorNow)) continue;
@@ -3421,7 +3657,7 @@
           if (Array.isArray(r.corridorPath) && r.corridorPath.length > 0) withPath++;
         }
         console.log(
-          `[Markup] ${b.id} эт.${floorNow}: room=${counts.room} hall=${counts.hall} stairs=${counts.stairs} corridor=${counts.corridor} (с маршрутом от Холла: ${withPath})`
+          `[Markup] ${b.id} эт.${floorNow}: room=${counts.room} hall=${counts.hall} entrance=${counts.entrance} emergency=${counts.emergency_exit} stairs=${counts.stairs} corridor=${counts.corridor} (с маршрутом от Холла: ${withPath})`
         );
       }
       // Показываем маркеры только текущего этажа: для других этажей координаты «уплывают»,
@@ -3437,14 +3673,32 @@
 
         const viewOnly = !editMode;
         const isSelected = editMode && selectedRoomMarkupId === r.id;
+        const useIcon = isMarkerIconKind(kind);
         const worldPos = worldFromFloorLocal(b, r.floor || 1, r.local);
         const wrap = new THREE.Group();
         wrap.position.copy(worldPos);
         wrap.userData.roomMarkupId = r.id;
         wrap.userData.roomMarkupFloor = r.floor || 1;
 
-        // В режиме разметки — шарики; при просто открытом этаже — только подписи (без шаров).
-        if (editMode) {
+        if (useIcon) {
+          attachRoomMarkupIcon(wrap, kind, isSelected);
+          if (editMode) {
+            const pickR = markerIconWorldScale() * 0.38;
+            const pick = new THREE.Mesh(
+              new THREE.SphereGeometry(pickR, 8, 8),
+              new THREE.MeshBasicMaterial({
+                visible: false,
+                transparent: true,
+                opacity: 0,
+                depthWrite: false,
+                depthTest: false
+              })
+            );
+            pick.userData.roomMarkupId = r.id;
+            pick.userData.roomMarkupFloor = r.floor || 1;
+            wrap.add(pick);
+          }
+        } else if (editMode) {
           const radius = isCorridor ? 0.08 : 0.14;
           const hasPath = Array.isArray(r.corridorPath) && r.corridorPath.length > 0;
           const mat = new THREE.MeshStandardMaterial({
@@ -3463,7 +3717,7 @@
         }
 
         if (!isCorridor) {
-          attachRoomMarkupLabel(wrap, r, kind, isSelected, viewOnly);
+          attachRoomMarkupLabel(wrap, r, kind, isSelected, viewOnly || useIcon);
         }
 
         roomMarkerGroup.add(wrap);
@@ -3585,8 +3839,12 @@
 
       r.label = label;
       r.floor = Number.isFinite(floorVal) ? Math.max(1, floorVal) : 1;
-      r.kind = ['hall', 'stairs', 'room', 'corridor'].includes(kind) ? kind : 'room';
+      r.kind = MARKUP_KINDS.includes(kind) ? kind : 'room';
       r.isStairs = r.kind === 'stairs';
+      if (isSignageOnlyKind(r.kind)) {
+        r.corridorPath = [];
+        r.hallId = null;
+      }
       r.local = { x: newX, z: newZ };
       // Привязка к Холлу: для самого Холла — null; иначе берём из селектора.
       // Пустая строка трактуется как «автоматически» (первый Холл этажа).
@@ -3710,12 +3968,13 @@
       // с фолбэком на первый Холл этажа. Так одна аудитория обслуживается одним
       // конкретным Холлом, даже если на этаже их несколько.
       const hall = r ? (resolveHallOfRoom(b, r) || (b ? findHallRoom(b, floor) : null)) : null;
-      const isHall = r && roomKindOf(r) === 'hall';
-      const isCorridor = r && roomKindOf(r) === 'corridor';
+      const rk = r ? roomKindOf(r) : '';
+      const isHall = rk === 'hall';
+      const isCorridor = rk === 'corridor';
+      const isSignage = isSignageOnlyKind(rk);
 
-      // Панель видна когда выбрана точка-цель: НЕ Холл (Холл — начало маршрутов)
-      // и НЕ узел коридора (он сам по себе якорь, маршрут к нему не нужен).
-      panel.hidden = !roomMarkupMode || !r || isHall || isCorridor;
+      // Панель видна когда выбрана точка-цель: НЕ Холл, НЕ обозначение входа/выхода, НЕ corridor.
+      panel.hidden = !roomMarkupMode || !r || isHall || isCorridor || isSignage;
       if (panel.hidden) return;
 
       const status = document.getElementById('path-editor-status');
@@ -3777,6 +4036,10 @@
       }
       if (k === 'corridor') {
         appendInfo('Узел коридора — сам якорь, маршрут к нему рисовать не нужно.', true);
+        return;
+      }
+      if (isSignageOnlyKind(k)) {
+        appendInfo('Вход и экстренный выход — только обозначения на плане, маршрут к ним не рисуется.', true);
         return;
       }
       pathDrawingMode = true;
@@ -4162,7 +4425,8 @@
       // соответствует логике corridorPath: путь рисуется ОТ Холла К точке.
       const groups = new Map(); // key -> { label, items: [{ id, text, sortKey }] }
       roomIndex.forEach((data, id) => {
-        if (roomKindOf(data.room) === 'corridor') return;
+        const rk = roomKindOf(data.room);
+        if (rk === 'corridor' || isSignageOnlyKind(rk)) return;
         const b = data.building;
         const key = `${b.id}__${data.floor}`;
         if (!groups.has(key)) {
@@ -4179,7 +4443,7 @@
         if (a.buildingName !== b.buildingName) return a.buildingName.localeCompare(b.buildingName, 'ru');
         return a.floor - b.floor;
       });
-      const kindOrder = { hall: 0, stairs: 1, room: 2 };
+      const kindOrder = { hall: 0, stairs: 1, entrance: 2, room: 3 };
       for (const g of sorted) {
         // ===== "Откуда": только Холлы этажа.
         const fromItems = g.items.filter((it) => roomKindOf(it.room) === 'hall');
@@ -5017,14 +5281,29 @@
           : '';
       // Краткая статистика по типам точек вместо полного списка лейблов —
       // длинный список аудиторий мусорно растягивает info-панель.
-      const counts = { room: 0, hall: 0, stairs: 0, corridor: 0 };
+      const counts = {
+        room: 0,
+        hall: 0,
+        stairs: 0,
+        corridor: 0,
+        entrance: 0,
+        emergency_exit: 0
+      };
       for (const r of b.rooms || []) {
         const k = roomKindOf(r);
         if (counts[k] !== undefined) counts[k]++;
       }
-      const total = counts.room + counts.hall + counts.stairs + counts.corridor;
+      const total =
+        counts.room +
+        counts.hall +
+        counts.stairs +
+        counts.corridor +
+        counts.entrance +
+        counts.emergency_exit;
       const parts = [];
       if (counts.hall) parts.push(`Холлов ${counts.hall}`);
+      if (counts.entrance) parts.push(`входов ${counts.entrance}`);
+      if (counts.emergency_exit) parts.push(`экстренных выходов ${counts.emergency_exit}`);
       if (counts.stairs) parts.push(`Лестниц ${counts.stairs}`);
       if (counts.room) parts.push(`аудиторий ${counts.room}`);
       if (counts.corridor) parts.push(`узлов коридора ${counts.corridor}`);
@@ -5441,6 +5720,35 @@
       refreshRoomMarkupVisuals();
       refreshPathEditorUi();
     });
+    document.getElementById('room-edit-type')?.addEventListener('change', (e) => {
+      const kind = e.target.value;
+      const labelInp = document.getElementById('room-edit-label');
+      const r = selectedMarkupRoom();
+      if (!labelInp || !r) return;
+      const cur = labelInp.value.trim();
+      const prevKind = roomKindOf(r);
+      const prevDefault = roomKindDisplayName(prevKind);
+      if (!cur || cur === prevDefault || /^Новая точка /i.test(cur) || /^узел-/i.test(cur)) {
+        if (kind === 'entrance') labelInp.value = 'Вход';
+        else if (kind === 'emergency_exit') labelInp.value = 'Экстренный выход';
+        else if (kind === 'stairs') labelInp.value = 'Лестница';
+        else if (kind === 'hall') labelInp.value = 'Холл';
+      }
+      // Нельзя вызывать fillRoomEditorFields() — он ставит type из старого r.kind и сбрасывает выбор.
+      r.kind = MARKUP_KINDS.includes(kind) ? kind : 'room';
+      r.isStairs = r.kind === 'stairs';
+      if (isSignageOnlyKind(r.kind)) {
+        r.hallId = null;
+        r.corridorPath = [];
+      }
+      const hallWrap = document.getElementById('room-edit-hall-wrap');
+      if (hallWrap) hallWrap.hidden = r.kind === 'hall' || isSignageOnlyKind(r.kind);
+      savePersistedRoomMarkup();
+      indexRooms();
+      populateRouteSelects();
+      refreshRoomMarkupVisuals();
+      refreshPathEditorUi();
+    });
     document.getElementById('btn-room-update').addEventListener('click', () => {
       updateSelectedMarkupRoomFromFields();
     });
@@ -5667,6 +5975,7 @@
       labelRenderer.render(scene, activeCamera);
     }
 
+    loadMarkerIconTextures();
     await loadCampus();
     setSelectedBuilding(MODEL_CONFIG.buildings[0]?.id);
     await updateFloorPlan();
