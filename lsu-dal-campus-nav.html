@@ -100,6 +100,35 @@
     }
     optgroup option { padding-left: 12px; color: #fff; }
 
+    /* Подписи над крупными точками разметки (холл, лестница, аудитория); узлы corridor без подписи */
+    .room-markup-label {
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.2;
+      color: #f8fafc;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(15, 20, 28, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+      white-space: nowrap;
+      pointer-events: none;
+      transform: translate(-50%, -100%);
+    }
+    .room-markup-label.kind-hall { color: #86efac; border-color: rgba(34, 197, 94, 0.35); }
+    .room-markup-label.kind-stairs { color: #fde047; border-color: rgba(234, 179, 8, 0.35); }
+    .room-markup-label.kind-room { color: #c7d2fe; }
+    .room-markup-label.is-selected {
+      background: rgba(29, 78, 216, 0.85);
+      border-color: rgba(147, 197, 253, 0.6);
+      color: #fff;
+    }
+    .room-markup-label.view-only {
+      font-size: 10px;
+      padding: 1px 5px;
+      background: rgba(15, 20, 28, 0.72);
+    }
+
     .row {
       display: flex;
       gap: 8px;
@@ -3207,8 +3236,35 @@
       while (roomMarkerGroup.children.length) {
         const c = roomMarkerGroup.children[0];
         roomMarkerGroup.remove(c);
+        c.traverse((o) => {
+          if (o.element?.parentNode) o.element.parentNode.removeChild(o.element);
+        });
         disposeSubtree(c);
       }
+    }
+
+    /** Этаж открыт (GLB подгружен) и совпадает с корпусом/номером этажа в UI. */
+    function isFloorPlanActiveForMarkup() {
+      if (!currentFloorMesh || currentFloorBuildingId == null || currentFloorLevel == null) {
+        return false;
+      }
+      const bid = document.getElementById('select-building')?.value;
+      if (bid !== currentFloorBuildingId) return false;
+      const level = parseInt(document.getElementById('select-floor')?.value, 10);
+      return Number.isFinite(level) && Number(level) === Number(currentFloorLevel);
+    }
+
+    /** Подпись над «крупной» точкой разметки (не corridor). */
+    function attachRoomMarkupLabel(group, r, kind, isSelected, viewOnly) {
+      const div = document.createElement('div');
+      div.className = `room-markup-label kind-${kind}${isSelected ? ' is-selected' : ''}${
+        viewOnly ? ' view-only' : ''
+      }`;
+      div.textContent = r.label || r.id;
+      const label = new CSS2DObject(div);
+      label.position.set(0, viewOnly ? 0.28 : 0.32, 0);
+      label.renderOrder = 10;
+      group.add(label);
     }
 
     function roomKindOf(r) {
@@ -3347,23 +3403,27 @@
 
     function refreshRoomMarkupVisuals() {
       clearRoomMarkupVisuals();
-      if (!roomMarkupMode) return;
-      const b = currentEditorBuilding();
+      // Подписи и крупные точки — когда открыт план этажа; режим разметки добавляет
+      // мелкие узлы corridor и линии путей.
+      if (!isFloorPlanActiveForMarkup()) return;
+      const b = buildingDataById.get(currentFloorBuildingId);
       if (!b) return;
-      const floorNow = currentEditorFloor();
-      // Сводка: сколько маркеров каких типов на текущем этаже — сразу видно,
-      // не «забыл ли я нажать Сохранить точку» при смене типа.
-      const counts = { room: 0, hall: 0, stairs: 0, corridor: 0 };
-      let withPath = 0;
-      for (const r of b.rooms || []) {
-        if (Number(r.floor) !== Number(floorNow)) continue;
-        const k = roomKindOf(r);
-        if (counts[k] !== undefined) counts[k]++;
-        if (Array.isArray(r.corridorPath) && r.corridorPath.length > 0) withPath++;
+      const floorNow = Number(currentFloorLevel) || currentEditorFloor();
+      const editMode = roomMarkupMode;
+
+      if (editMode) {
+        const counts = { room: 0, hall: 0, stairs: 0, corridor: 0 };
+        let withPath = 0;
+        for (const r of b.rooms || []) {
+          if (Number(r.floor) !== Number(floorNow)) continue;
+          const k = roomKindOf(r);
+          if (counts[k] !== undefined) counts[k]++;
+          if (Array.isArray(r.corridorPath) && r.corridorPath.length > 0) withPath++;
+        }
+        console.log(
+          `[Markup] ${b.id} эт.${floorNow}: room=${counts.room} hall=${counts.hall} stairs=${counts.stairs} corridor=${counts.corridor} (с маршрутом от Холла: ${withPath})`
+        );
       }
-      console.log(
-        `[Markup] ${b.id} эт.${floorNow}: room=${counts.room} hall=${counts.hall} stairs=${counts.stairs} corridor=${counts.corridor} (с маршрутом от Холла: ${withPath})`
-      );
       // Показываем маркеры только текущего этажа: для других этажей координаты «уплывают»,
       // т.к. рассчитываются по упрощённой формуле без rotation/mirror/scale текущего плана.
       // Точки других этажей сохранены — переключите этаж в селекторе, чтобы увидеть их.
@@ -3372,27 +3432,44 @@
         if (!r.local || !Number.isFinite(Number(r.local.x)) || !Number.isFinite(Number(r.local.z))) continue;
         const kind = roomKindOf(r);
         const isCorridor = kind === 'corridor';
-        // Узлы коридора — маленькие и полупрозрачные, чтобы не загромождать вид.
-        const geom = new THREE.SphereGeometry(isCorridor ? 0.08 : 0.14, 10, 10);
-        const isSelected = selectedRoomMarkupId === r.id;
-        const hasPath = Array.isArray(r.corridorPath) && r.corridorPath.length > 0;
-        const mat = new THREE.MeshStandardMaterial({
-          color: roomColorForKind(kind),
-          transparent: true,
-          opacity: isCorridor ? 0.6 : 0.95,
-          // Зелёное свечение, если у точки уже нарисован путь от Холла — глаз сразу ловит
-          // какие точки готовы для маршрутов, а какие ещё ждут разметки.
-          emissive: isSelected ? 0x1d4ed8 : (hasPath && !isCorridor ? 0x14532d : 0x000000),
-          emissiveIntensity: isSelected ? 0.75 : (hasPath && !isCorridor ? 0.5 : 0)
-        });
-        const marker = new THREE.Mesh(geom, mat);
-        marker.castShadow = false;
-        marker.receiveShadow = false;
-        marker.position.copy(worldFromFloorLocal(b, r.floor || 1, r.local));
-        marker.userData.roomMarkupId = r.id;
-        marker.userData.roomMarkupFloor = r.floor || 1;
-        roomMarkerGroup.add(marker);
+        // Мелкие узлы corridor — только в режиме разметки (на открытом этаже скрыты).
+        if (isCorridor && !editMode) continue;
+
+        const viewOnly = !editMode;
+        const isSelected = editMode && selectedRoomMarkupId === r.id;
+        const worldPos = worldFromFloorLocal(b, r.floor || 1, r.local);
+        const wrap = new THREE.Group();
+        wrap.position.copy(worldPos);
+        wrap.userData.roomMarkupId = r.id;
+        wrap.userData.roomMarkupFloor = r.floor || 1;
+
+        // В режиме разметки — шарики; при просто открытом этаже — только подписи (без шаров).
+        if (editMode) {
+          const radius = isCorridor ? 0.08 : 0.14;
+          const hasPath = Array.isArray(r.corridorPath) && r.corridorPath.length > 0;
+          const mat = new THREE.MeshStandardMaterial({
+            color: roomColorForKind(kind),
+            transparent: true,
+            opacity: isCorridor ? 0.6 : 0.95,
+            emissive: isSelected ? 0x1d4ed8 : hasPath && !isCorridor ? 0x14532d : 0x000000,
+            emissiveIntensity: isSelected ? 0.75 : hasPath && !isCorridor ? 0.5 : 0
+          });
+          const marker = new THREE.Mesh(new THREE.SphereGeometry(radius, 10, 10), mat);
+          marker.castShadow = false;
+          marker.receiveShadow = false;
+          marker.userData.roomMarkupId = r.id;
+          marker.userData.roomMarkupFloor = r.floor || 1;
+          wrap.add(marker);
+        }
+
+        if (!isCorridor) {
+          attachRoomMarkupLabel(wrap, r, kind, isSelected, viewOnly);
+        }
+
+        roomMarkerGroup.add(wrap);
       }
+
+      if (!editMode) return;
 
       // Рисуем сохранённые ломаные «Холл этажа → точка» как тонкие зелёные линии,
       // чтобы при разметке было видно, какие маршруты уже есть. Для corridor-точек
