@@ -493,6 +493,25 @@
       <input type="range" id="building-rotate-slider" min="-180" max="180" value="0" step="1" style="width:100%;" />
     </div>
 
+    <div id="building-color-panel" class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
+      <label for="building-color-picker">Цвет корпуса</label>
+      <p class="hint" style="margin:0 0 8px 0;">Для здания из списка выше. Смешивается с исходной текстурой GLB — как раскраска зданий на картах. Сохраняется в браузере.</p>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+        <input type="color" id="building-color-picker" value="#9eb4c8" style="width:48px;height:36px;padding:2px;border:1px solid rgba(255,255,255,0.2);background:transparent;cursor:pointer;" />
+        <button type="button" class="primary" id="btn-building-color-apply">Применить</button>
+        <button type="button" class="ghost" id="btn-building-color-reset">Сбросить</button>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;" id="building-color-presets">
+        <button type="button" class="ghost building-color-preset" data-color="#9eb4c8" title="По умолчанию (серо-голубой)">Стандарт</button>
+        <button type="button" class="ghost building-color-preset" data-color="#e8dcc8" title="Светлый фасад">Светлый</button>
+        <button type="button" class="ghost building-color-preset" data-color="#c4b8a8" title="Бежевый">Беж</button>
+        <button type="button" class="ghost building-color-preset" data-color="#a8c4e0" title="Голубой">Голубой</button>
+        <button type="button" class="ghost building-color-preset" data-color="#b5d4b8" title="Зелёный">Зелёный</button>
+        <button type="button" class="ghost building-color-preset" data-color="#d4a89a" title="Терракота">Терракота</button>
+      </div>
+      <p class="hint" id="building-color-status" style="margin:8px 0 0 0;">—</p>
+    </div>
+
     <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
       <label>Расстановка корпусов (gizmo)</label>
       <div class="toggle-row">
@@ -1209,6 +1228,10 @@
       /** Радиус (м), в котором клик замыкает контур на первой вершине. */
       CAMPUS_ZONE_CLOSE_VERTEX_RADIUS: 4,
       CAMPUS_ZONE_SURFACE_Y: 0.045,
+      /** Пользовательские цвета корпусов (id → #rrggbb) в localStorage. */
+      BUILDING_COLORS_STORAGE_KEY: 'lsu-dal-campus-nav-building-colors-v1',
+      /** 0 = только исходный GLB, 1 = полностью выбранный цвет. */
+      BUILDING_COLOR_TINT_STRENGTH: 0.62,
       /** Размер значка входа / выхода / лестницы на плане этажа (усл. метры). */
       MARKER_ICON_WORLD_SCALE: 0.62,
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
@@ -1909,7 +1932,7 @@
           mapGroundGrid.visible = true;
         }
       }
-      syncCampusZoneLayerOrder();
+      syncMapOverlayLayerOrder();
       endLoad();
     }
 
@@ -2385,6 +2408,137 @@
     const buildingDataById = new Map();
     let selectedBuildingId = null;
     const originalMaterials = new WeakMap();
+    const buildingColorOverrides = new Map();
+
+    function buildingColorsStorageKey() {
+      return MODEL_CONFIG.BUILDING_COLORS_STORAGE_KEY || 'lsu-dal-campus-nav-building-colors-v1';
+    }
+
+    function buildingColorTintStrength() {
+      return THREE.MathUtils.clamp(
+        Number(MODEL_CONFIG.BUILDING_COLOR_TINT_STRENGTH) || 0.62,
+        0,
+        1
+      );
+    }
+
+    function normalizeBuildingColorHex(raw) {
+      if (raw == null || raw === '') return null;
+      let s = String(raw).trim();
+      if (!s) return null;
+      if (!s.startsWith('#')) s = `#${s}`;
+      const c = new THREE.Color(s);
+      if (!Number.isFinite(c.r)) return null;
+      return `#${c.getHexString()}`;
+    }
+
+    function loadBuildingColorsFromStorage() {
+      buildingColorOverrides.clear();
+      try {
+        const raw = localStorage.getItem(buildingColorsStorageKey());
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        const colors = parsed?.colors || parsed;
+        if (!colors || typeof colors !== 'object') return;
+        for (const [bid, hex] of Object.entries(colors)) {
+          const norm = normalizeBuildingColorHex(hex);
+          if (norm) buildingColorOverrides.set(bid, norm);
+        }
+      } catch (e) {
+        console.warn('[LSU Nav] building colors localStorage', e);
+      }
+    }
+
+    function saveBuildingColorsToStorage() {
+      try {
+        const colors = Object.fromEntries(buildingColorOverrides);
+        localStorage.setItem(
+          buildingColorsStorageKey(),
+          JSON.stringify({ v: 1, colors })
+        );
+      } catch (e) {
+        console.warn('[LSU Nav] save building colors', e);
+      }
+    }
+
+    function getBuildingColorOverride(bid) {
+      return bid ? buildingColorOverrides.get(bid) || null : null;
+    }
+
+    function setBuildingColorOverride(bid, hexOrNull) {
+      if (!bid) return;
+      const norm = normalizeBuildingColorHex(hexOrNull);
+      if (norm) buildingColorOverrides.set(bid, norm);
+      else buildingColorOverrides.delete(bid);
+      saveBuildingColorsToStorage();
+    }
+
+    function restoreMeshMaterialsFromOriginal(mesh) {
+      const orig = originalMaterials.get(mesh);
+      if (!orig || !mesh.isMesh || !mesh.material) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      if (Array.isArray(mesh.material)) {
+        mesh.material = orig.map((m) => m.clone());
+      } else {
+        mesh.material = orig[0].clone();
+      }
+      const restored = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      restored.forEach((m, i) => {
+        if (m && orig[i]) {
+          m.copy(orig[i]);
+          m.needsUpdate = true;
+        }
+      });
+    }
+
+    function applyBuildingColorToRoot(root, bid) {
+      if (!root) return;
+      const hex = getBuildingColorOverride(bid);
+      const strength = buildingColorTintStrength();
+      const tint = hex ? new THREE.Color(hex) : null;
+      root.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        restoreMeshMaterialsFromOriginal(o);
+        if (!tint) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        const orig = originalMaterials.get(o);
+        if (!orig) return;
+        mats.forEach((m, i) => {
+          const oM = orig[i];
+          if (!m || !oM || !oM.color) return;
+          m.color.copy(oM.color).lerp(tint, strength);
+          if (m.emissive) {
+            m.emissive.setHex(0x000000);
+            m.emissiveIntensity = 0;
+          }
+          m.needsUpdate = true;
+        });
+      });
+    }
+
+    function applyAllBuildingColors() {
+      for (const [bid, root] of buildingMeshes) {
+        applyBuildingColorToRoot(root, bid);
+      }
+    }
+
+    function refreshBuildingColorUi() {
+      const bid = document.getElementById('select-building')?.value;
+      const status = document.getElementById('building-color-status');
+      const picker = document.getElementById('building-color-picker');
+      if (!bid || !buildingMeshes.has(bid)) {
+        if (status) status.textContent = 'Выберите корпус в списке.';
+        return;
+      }
+      const b = buildingDataById.get(bid);
+      const saved = getBuildingColorOverride(bid);
+      if (picker && saved) picker.value = saved;
+      if (status) {
+        status.textContent = saved
+          ? `${b?.name || bid}: сохранён цвет ${saved}.`
+          : `${b?.name || bid}: исходные материалы GLB.`;
+      }
+    }
 
     function effectiveFloors(b) {
       if (!b || !Array.isArray(b.floors) || b.floors.length === 0) return [];
@@ -2466,12 +2620,18 @@
     }
 
     function highlightBuilding(root, on) {
+      const bid =
+        root?.userData?.buildingId ||
+        root?.children?.find((c) => c.userData?.buildingId)?.userData?.buildingId;
+      if (!on && bid) {
+        applyBuildingColorToRoot(root, bid);
+        return;
+      }
       root.traverse((o) => {
         if (!o.isMesh || !o.material) return;
         const mats = Array.isArray(o.material) ? o.material : [o.material];
-        const orig = originalMaterials.get(o);
         if (on) {
-          mats.forEach((m, i) => {
+          mats.forEach((m) => {
             if (m.emissive) {
               m.emissive.setHex(0x224422);
               m.emissiveIntensity = 0.45;
@@ -2479,12 +2639,6 @@
               m.color?.offsetHSL(0, 0, 0.15);
             }
           });
-        } else if (orig) {
-          if (Array.isArray(o.material)) {
-            o.material = orig.map((m) => m.clone());
-          } else {
-            o.material = orig[0].clone();
-          }
         }
       });
     }
@@ -4744,10 +4898,10 @@
       }
     }
 
-    function buildGreenZoneMesh(points, kind, opts = {}) {
+    function buildFlatPolygonMesh(points, style, opts = {}) {
       const ring = points.map((p) => ({ x: p.x, z: p.z }));
       if (ring.length < 3) return null;
-      const surfaceY = Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045;
+      const surfaceY = style.surfaceY ?? 0.045;
       const shape = new THREE.Shape();
       ring.forEach((p, i) => {
         if (i === 0) shape.moveTo(p.x, p.z);
@@ -4762,9 +4916,9 @@
       pos.needsUpdate = true;
       geom.computeVertexNormals();
       const mat = new THREE.MeshBasicMaterial({
-        color: zoneColorForKind(kind),
+        color: style.color,
         transparent: true,
-        opacity: opts.preview ? 0.38 : zoneFillOpacity(),
+        opacity: opts.preview ? style.previewOpacity ?? 0.38 : style.opacity,
         depthWrite: false,
         side: THREE.DoubleSide,
         polygonOffset: true,
@@ -4772,9 +4926,24 @@
         polygonOffsetUnits: -1
       });
       const mesh = new THREE.Mesh(geom, mat);
-      mesh.renderOrder = opts.preview ? 3 : 2;
-      if (opts.zoneId != null) mesh.userData.campusZoneId = opts.zoneId;
+      mesh.renderOrder = opts.preview ? style.previewRenderOrder ?? 4 : style.renderOrder ?? 2;
+      if (opts.userData) Object.assign(mesh.userData, opts.userData);
       return mesh;
+    }
+
+    function buildGreenZoneMesh(points, kind, opts = {}) {
+      return buildFlatPolygonMesh(
+        points,
+        {
+          color: zoneColorForKind(kind),
+          opacity: zoneFillOpacity(),
+          previewOpacity: 0.38,
+          surfaceY: Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045,
+          renderOrder: 3,
+          previewRenderOrder: 5
+        },
+        { ...opts, userData: opts.zoneId != null ? { campusZoneId: opts.zoneId } : undefined }
+      );
     }
 
     function refreshCampusZoneMergedVisuals() {
@@ -4787,7 +4956,7 @@
         const mesh = buildGreenZoneMesh(zone.points, zone.kind, { zoneId: zone.id });
         if (mesh) campusZoneMergedGroup.add(mesh);
       }
-      syncCampusZoneLayerOrder();
+      syncMapOverlayLayerOrder();
       refreshCampusZonePreview();
     }
 
@@ -4842,15 +5011,17 @@
           });
         }
       }
-      syncCampusZoneLayerOrder();
+      syncMapOverlayLayerOrder();
     }
 
-    function syncCampusZoneLayerOrder() {
-      if (!campusZoneMergedGroup.parent) return;
-      scene.remove(campusZoneMergedGroup);
-      scene.remove(campusZonePreviewGroup);
-      scene.add(campusZoneMergedGroup);
-      scene.add(campusZonePreviewGroup);
+    function syncMapOverlayLayerOrder() {
+      const groups = [campusZoneMergedGroup, campusZonePreviewGroup];
+      for (const g of groups) {
+        if (g?.parent) {
+          scene.remove(g);
+          scene.add(g);
+        }
+      }
       buildingMeshes.forEach((root) => {
         if (root.parent === scene) {
           scene.remove(root);
@@ -5017,6 +5188,7 @@
           MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && anyBuildingHasManualFloorToggle()
         );
       }
+      loadBuildingColorsFromStorage();
       await applyPersistedRoomMarkup();
       await applyPersistedCampusZones();
       refreshCampusZoneMergedVisuals();
@@ -5151,6 +5323,7 @@
           z: (-edx * s0 + edz * c0) / m0
         };
 
+        root.userData.buildingId = b.id;
         root.traverse((o) => {
           o.userData.buildingId = b.id;
         });
@@ -5174,6 +5347,7 @@
         updateBuildingLabel(b.id);
       }
       applyPersistedBuildingLayout();
+      applyAllBuildingColors();
       } finally {
         campusLayoutLoadPass = false;
       }
@@ -5188,14 +5362,14 @@
             : '';
         warnEl.innerHTML = `Показана заглушка-куб для <strong>${fallbackCount}</strong> из ${n} корпусов.${embedHint} Если задан отдельный <code>modelPath</code> — проверьте путь и папку <code>3D/</code>. Консоль: F12.`;
       }
-      syncCampusZoneLayerOrder();
+      syncMapOverlayLayerOrder();
       endLoad();
       populateRouteSelects();
       populateBuildingSelect();
       syncFloorPlanToggleUi();
       applyFloorInteriorLod();
       await loadSurroundingBuildings();
-      syncCampusZoneLayerOrder();
+      syncMapOverlayLayerOrder();
     }
 
     async function loadSurroundingBuildings() {
@@ -5874,6 +6048,7 @@
       updateBuildingSizeReadout();
       refreshTransformAttachment();
       refreshRoomMarkupUi();
+      refreshBuildingColorUi();
     }
 
     function updateBuildingSizeReadout() {
@@ -6009,6 +6184,46 @@
       void updateFloorPlan();
       refreshFloorRotationUi();
       refreshFloorShiftUi();
+      refreshBuildingColorUi();
+    });
+
+    document.getElementById('btn-building-color-apply')?.addEventListener('click', () => {
+      const bid = document.getElementById('select-building')?.value;
+      const picker = document.getElementById('building-color-picker');
+      if (!bid || !buildingMeshes.has(bid)) {
+        appendInfo('Сначала выберите корпус.', false);
+        return;
+      }
+      const hex = normalizeBuildingColorHex(picker?.value);
+      if (!hex) return;
+      setBuildingColorOverride(bid, hex);
+      applyBuildingColorToRoot(buildingMeshes.get(bid), bid);
+      if (selectedBuildingId === bid) {
+        highlightBuilding(buildingMeshes.get(bid), true);
+      }
+      refreshBuildingColorUi();
+      appendInfo(`Цвет корпуса сохранён: <strong>${hex}</strong>`, false);
+    });
+
+    document.getElementById('btn-building-color-reset')?.addEventListener('click', () => {
+      const bid = document.getElementById('select-building')?.value;
+      if (!bid || !buildingMeshes.has(bid)) return;
+      setBuildingColorOverride(bid, null);
+      applyBuildingColorToRoot(buildingMeshes.get(bid), bid);
+      if (selectedBuildingId === bid) {
+        highlightBuilding(buildingMeshes.get(bid), true);
+      }
+      refreshBuildingColorUi();
+      appendInfo('Цвет корпуса сброшен к исходному GLB.', false);
+    });
+
+    document.querySelectorAll('.building-color-preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const hex = btn.getAttribute('data-color');
+        const picker = document.getElementById('building-color-picker');
+        if (picker && hex) picker.value = hex;
+        document.getElementById('btn-building-color-apply')?.click();
+      });
     });
 
     // ---- Панель «Поворот выбранного этажа» ------------------------------
