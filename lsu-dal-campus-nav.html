@@ -529,81 +529,44 @@
       <input type="checkbox" id="toggle-floor-plan" />
     </div>
 
-    <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
-      <label>Зелёные зоны карты</label>
-      <p class="hint" style="margin:0 0 8px 0;">Как в Cities: Skylines: <strong>кисть по клеткам</strong> на карте кампуса (вид сверху). Не совмещайте с разметкой этажа.</p>
+    <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:8px;">
+      <label>Зелёные зоны (как на картах)</label>
       <div class="toggle-row">
         <span>Режим рисования зон</span>
-        <input type="checkbox" id="toggle-zone-edit-mode" />
+        <input type="checkbox" id="toggle-campus-zone-edit" />
       </div>
-      <div id="zone-editor-panel" class="room-editor-panel" hidden>
-        <div class="room-editor-grid">
-          <div class="field" style="margin:0;">
-            <label for="zone-draw-tool">Инструмент</label>
-            <select id="zone-draw-tool">
-              <option value="brush" selected>Кисть (закраска клеток)</option>
-              <option value="eraser">Ластик</option>
-              <option value="polygon">Контур вручную</option>
+      <div id="zone-editor-panel" hidden>
+        <p class="hint" style="margin-bottom:8px;">Как в Конструкторе Я.Карт: клик по карте — вершина многоугольника. «Замкнуть» или клик у первой точки (зелёный маркер) — готовая зона.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <div class="field" style="margin:0;flex:1;min-width:120px;">
+            <label for="zone-edit-kind">Тип новой зоны</label>
+            <select id="zone-edit-kind">
+              <option value="lawn">Газон</option>
+              <option value="park">Парк / сквер</option>
+              <option value="courtyard">Внутренний двор</option>
             </select>
           </div>
-          <div id="zone-brush-tools">
-            <div class="field" style="margin:0;">
-              <label for="zone-edit-kind">Тип зелени</label>
-              <select id="zone-edit-kind">
-                <option value="lawn">Газон</option>
-                <option value="park">Сквер / парк</option>
-                <option value="courtyard">Двор</option>
-              </select>
-            </div>
-            <div class="field" style="margin:0;">
-              <label for="zone-brush-size">Размер кисти</label>
-              <select id="zone-brush-size">
-                <option value="1">1 клетка</option>
-                <option value="3" selected>3×3</option>
-                <option value="5">5×5</option>
-                <option value="9">9×9</option>
-              </select>
-            </div>
-            <div class="toggle-row" style="margin:4px 0;">
-              <span>Показать сетку клеток</span>
-              <input type="checkbox" id="toggle-zone-grid" checked />
-            </div>
-            <button type="button" id="btn-zone-clear-cells" class="ghost" style="width:100%;margin-top:4px;">Очистить всю зелень (клетки)</button>
-          </div>
-          <div id="zone-polygon-tools" hidden>
-            <div class="field" style="margin:0;">
-              <label for="zone-edit-label">Название</label>
-              <input id="zone-edit-label" type="text" placeholder="например: Сквер у 3 корпуса" />
-            </div>
-            <div class="field" style="margin:0;">
-              <label for="zone-polygon-kind">Тип</label>
-              <select id="zone-polygon-kind">
-                <option value="lawn">Газон</option>
-                <option value="park">Сквер / парк</option>
-                <option value="courtyard">Двор</option>
-              </select>
-            </div>
-            <div class="row" style="gap:8px;flex-wrap:wrap;">
-              <button type="button" id="btn-zone-finish" class="primary">Замкнуть контур</button>
-              <button type="button" id="btn-zone-undo" class="ghost">Отменить точку</button>
-              <button type="button" id="btn-zone-cancel-draw" class="ghost">Сбросить контур</button>
-            </div>
-            <div class="field" style="margin:0;">
-              <label for="zone-edit-select">Контурные зоны</label>
-              <select id="zone-edit-select"></select>
-            </div>
-            <div class="row" style="gap:8px;flex-wrap:wrap;">
-              <button type="button" id="btn-zone-save" class="ghost">Сохранить контур</button>
-              <button type="button" id="btn-zone-delete" class="ghost">Удалить контур</button>
-            </div>
-          </div>
-          <p class="mini" id="zone-draw-status" style="margin:0;">Зажмите ЛКМ и ведите по карте — закраска клеток.</p>
-          <div class="row" style="gap:8px;flex-wrap:wrap;">
-            <button type="button" id="btn-zone-export">Экспорт JSON</button>
-            <button type="button" id="btn-zone-export-backup" class="ghost">Backup для репозитория</button>
-            <button type="button" id="btn-zone-import" class="ghost">Импорт JSON</button>
+          <div class="field" style="margin:0;flex:1;min-width:140px;">
+            <label for="zone-edit-name">Название (необязательно)</label>
+            <input id="zone-edit-name" type="text" placeholder="например: Газон у 3 корпуса" />
           </div>
         </div>
+        <div class="field" style="margin:0 0 8px 0;">
+          <label for="zone-list-select">Зоны на карте</label>
+          <select id="zone-list-select">
+            <option value="">— выберите зону —</option>
+          </select>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button type="button" id="btn-zone-finish-polygon">Замкнуть полигон</button>
+          <button type="button" id="btn-zone-undo-vertex" class="ghost">Отменить точку</button>
+          <button type="button" id="btn-zone-cancel-draft" class="ghost">Отменить рисование</button>
+        </div>
+        <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+          <button type="button" id="btn-zone-delete-selected" class="ghost">Удалить выбранную</button>
+          <button type="button" id="btn-zone-clear-all" class="ghost">Очистить все</button>
+        </div>
+        <p class="hint" id="zone-draw-status" style="margin:8px 0;"></p>
       </div>
     </div>
 
@@ -1240,6 +1203,12 @@
        * поверх неё — личные правки в браузере. Положите сюда файл из «Скачать backup…».
        */
       ROOM_MARKUP_BACKUP_PATH: 'database/exports/room-markup-backup.json',
+      /** Зелёные зоны: многоугольники по точкам (как Конструктор Я.Карт). */
+      CAMPUS_ZONES_STORAGE_KEY: 'lsu-dal-campus-nav-campus-zones-v3',
+      CAMPUS_ZONES_BACKUP_PATH: 'database/exports/campus-zones-backup.json',
+      /** Радиус (м), в котором клик замыкает контур на первой вершине. */
+      CAMPUS_ZONE_CLOSE_VERTEX_RADIUS: 4,
+      CAMPUS_ZONE_SURFACE_Y: 0.045,
       /** Размер значка входа / выхода / лестницы на плане этажа (усл. метры). */
       MARKER_ICON_WORLD_SCALE: 0.62,
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
@@ -1325,82 +1294,8 @@
       /** Тёмные линии плана (улицы); ниже порога яркости см. DISTRICT_MAP_LINE_LUMINANCE_MAX */
       DISTRICT_MAP_LINE_TINT_COLOR: 0x4a5562,
       /** Выше — «тело» кварталов, ниже или равно — дороги/контуры (остаются тёмнее). */
-      DISTRICT_MAP_LINE_LUMINANCE_MAX: 0.38,
-
-      /** 'yandex' — светлая карта; 'classic' — прежний вид. */
-      MAP_VISUAL_STYLE: 'yandex',
-
-      /** Зелёные зоны на карте кампуса (полигоны в мировых XZ). */
-      CAMPUS_ZONES_STORAGE_KEY: 'lsu-dal-campus-nav-campus-zones-v2',
-      CAMPUS_ZONES_BACKUP_PATH: 'database/exports/campus-zones-backup.json',
-      CAMPUS_ZONE_SURFACE_Y: 0.045,
-      /** Размер клетки сетки для кисти зон (м, мировые XZ). */
-      CAMPUS_ZONE_GRID_CELL: 4,
-      /** Половина стороны сетки-оверлея (м) при рисовании зон. */
-      CAMPUS_ZONE_GRID_EXTENT: 520
+      DISTRICT_MAP_LINE_LUMINANCE_MAX: 0.38
     };
-
-    const MAP_THEMES = {
-      classic: {
-        sky: 0x87b8e0,
-        fogDensity: 0.002,
-        hemiSky: 0xdfefff,
-        hemiGround: 0x3d4f5c,
-        hemiIntensity: 0.55,
-        dirColor: 0xfff5e6,
-        dirIntensity: 1.05,
-        pointIntensity: 0.35,
-        pointColor: 0xffaa66,
-        castShadow: true,
-        ground: 0x3d5c45,
-        gridMain: 0x1a3320,
-        gridOpacity: 0.35,
-        underlay: 0x3d4652,
-        mapGridMain: 0x7a8798,
-        mapGridOpacity: 0.28,
-        districtTint: 0xb8c2cc,
-        districtLine: 0x4a5562,
-        districtGreen: null,
-        districtTintBlend: 0.28,
-        districtLineLumMax: 0.38,
-        buildingTint: null,
-        buildingPinkTint: null
-      },
-      yandex: {
-        sky: 0xf5f4f0,
-        fogDensity: 0.00028,
-        hemiSky: 0xffffff,
-        hemiGround: 0xf0ebe3,
-        hemiIntensity: 0.9,
-        dirColor: 0xfffdf8,
-        dirIntensity: 0.42,
-        pointIntensity: 0.05,
-        pointColor: 0xffffff,
-        castShadow: false,
-        ground: 0xf2efe8,
-        gridMain: 0xd8d4cc,
-        gridOpacity: 0.18,
-        underlay: 0xf6f4ef,
-        mapGridMain: 0xd4d0c8,
-        mapGridOpacity: 0.14,
-        districtTint: 0xf2f0ea,
-        districtLine: 0x9ebce8,
-        districtGreen: 0xb4ddb0,
-        districtTintBlend: 0.42,
-        districtLineLumMax: 0.4,
-        buildingPalette: [0xfff6eb, 0xe3edf8, 0xf5ebe6, 0xe6f0ea, 0xf3e8ee, 0xede8f6],
-        buildingTintBlend: 0.9
-      }
-    };
-
-    function isMapStyleYandex() {
-      return String(MODEL_CONFIG.MAP_VISUAL_STYLE || 'yandex').toLowerCase() === 'yandex';
-    }
-
-    function getActiveMapTheme() {
-      const key = String(MODEL_CONFIG.MAP_VISUAL_STYLE || 'yandex').toLowerCase();
-      return MAP_THEMES[key] || MAP_THEMES.yandex;
-    }
 
     /** true — пока грузятся корпуса и подставляется localStorage (не писать в хранилище). */
     let campusLayoutLoadPass = false;
@@ -1586,29 +1481,15 @@
     /** Визуально близко к корпусам: DoubleSide/PBR-правки + тонирование «тела» и линий плана. */
     function harmonizeDistrictMapMaterials(root) {
       if (MODEL_CONFIG.DISTRICT_MAP_MATCH_BUILDING_TONE === false) return;
-      const theme = getActiveMapTheme();
-      const tint =
-        theme.districtTint ?? MODEL_CONFIG.DISTRICT_MAP_TINT_COLOR ?? 0xb8c2cc;
-      const lineTint =
-        theme.districtLine ?? MODEL_CONFIG.DISTRICT_MAP_LINE_TINT_COLOR ?? 0x7d8792;
-      const blend = Math.min(
-        1,
-        Math.max(
-          0,
-          Number(theme.districtTintBlend ?? MODEL_CONFIG.DISTRICT_MAP_TINT_BLEND) || 0.28
-        )
-      );
+      const tint = MODEL_CONFIG.DISTRICT_MAP_TINT_COLOR ?? 0xb8c2cc;
+      const lineTint = MODEL_CONFIG.DISTRICT_MAP_LINE_TINT_COLOR ?? 0x7d8792;
+      const blend = Math.min(1, Math.max(0, Number(MODEL_CONFIG.DISTRICT_MAP_TINT_BLEND) || 0.28));
       const tintCol = new THREE.Color(tint);
       const lineCol = new THREE.Color(lineTint);
-      const greenCol = theme.districtGreen ? new THREE.Color(theme.districtGreen) : null;
       const did = 'district-map';
       const lineLumMax = Math.min(
         0.55,
-        Math.max(
-          0.08,
-          Number(theme.districtLineLumMax ?? MODEL_CONFIG.DISTRICT_MAP_LINE_LUMINANCE_MAX) ||
-            0.38
-        )
+        Math.max(0.08, Number(MODEL_CONFIG.DISTRICT_MAP_LINE_LUMINANCE_MAX) || 0.38)
       );
       root.traverse((o) => {
         if (!o.isMesh || !o.material) return;
@@ -1621,57 +1502,16 @@
           if (!m || !m.color || typeof m.color.getHSL !== 'function') return;
           const hsl = { h: 0, s: 0, l: 0 };
           m.color.getHSL(hsl);
-          if (
-            greenCol &&
-            hsl.s > 0.1 &&
-            hsl.h >= 0.18 &&
-            hsl.h <= 0.48 &&
-            hsl.l > lineLumMax * 0.82
-          ) {
-            m.color.copy(greenCol);
-          } else if (hsl.l <= lineLumMax) {
+          if (hsl.l <= lineLumMax) {
             m.color.copy(lineCol);
           } else {
             m.color.lerp(tintCol, blend);
           }
           if ('roughness' in m && m.roughness !== undefined) {
-            m.roughness = Math.max(0.88, m.roughness);
+            m.roughness = Math.max(0.8, m.roughness);
           }
           if ('metalness' in m && m.metalness !== undefined) {
-            m.metalness = THREE.MathUtils.clamp(m.metalness * 0.25, 0, 0.12);
-          }
-          m.needsUpdate = true;
-        });
-      });
-    }
-
-    function harmonizeCampusBuildingMaterials(root, variantIndex = 0, blend) {
-      const theme = getActiveMapTheme();
-      const palette = theme.buildingPalette;
-      if (!palette?.length && !theme.buildingTint) return;
-      const pick =
-        palette?.length > 0
-          ? palette[((variantIndex % palette.length) + palette.length) % palette.length]
-          : theme.buildingTint;
-      const tintCol = new THREE.Color(pick);
-      const mix = Math.min(
-        1,
-        Math.max(0, Number(blend ?? theme.buildingTintBlend ?? 0.58))
-      );
-      root.traverse((o) => {
-        if (!o.isMesh || !o.material) return;
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        mats.forEach((m) => {
-          if (!m || !m.color) return;
-          m.color.lerp(tintCol, mix);
-          if ('roughness' in m && m.roughness !== undefined) {
-            m.roughness = Math.max(0.9, m.roughness);
-          }
-          if ('metalness' in m && m.metalness !== undefined) {
-            m.metalness = THREE.MathUtils.clamp(m.metalness * 0.2, 0, 0.1);
-          }
-          if (m.emissive && 'emissiveIntensity' in m) {
-            m.emissiveIntensity = 0;
+            m.metalness = THREE.MathUtils.clamp(m.metalness * 0.35, 0, 0.18);
           }
           m.needsUpdate = true;
         });
@@ -2035,12 +1875,8 @@
       }
       harmonizeDistrictMapMaterials(root);
 
-      const cast = isMapStyleYandex()
-        ? false
-        : MODEL_CONFIG.DISTRICT_MAP_CAST_SHADOW === true;
-      const recv = isMapStyleYandex()
-        ? false
-        : MODEL_CONFIG.DISTRICT_MAP_RECEIVE_SHADOW !== false;
+      const cast = MODEL_CONFIG.DISTRICT_MAP_CAST_SHADOW === true;
+      const recv = MODEL_CONFIG.DISTRICT_MAP_RECEIVE_SHADOW !== false;
       const mapLocked = MODEL_CONFIG.DISTRICT_MAP_SCENE_LOCKED !== false;
       root.traverse((o) => {
         if (o.isMesh) {
@@ -2073,15 +1909,15 @@
           mapGroundGrid.visible = true;
         }
       }
+      syncCampusZoneLayerOrder();
       endLoad();
     }
 
     // --- Scene ---
-    const _initMapTheme = getActiveMapTheme();
-    const SKY_COLOR = _initMapTheme.sky ?? 0x87b8e0;
+    const SKY_COLOR = 0x87b8e0;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(SKY_COLOR);
-    scene.fog = new THREE.FogExp2(SKY_COLOR, _initMapTheme.fogDensity ?? 0.002);
+    scene.fog = new THREE.FogExp2(SKY_COLOR, 0.002);
 
     const perspCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 4000);
     perspCamera.position.set(160, 120, 200);
@@ -2445,51 +2281,6 @@
     mapGroundGrid.material.opacity = 0.28;
     mapGroundGrid.visible = false;
     scene.add(mapGroundGrid);
-
-    const campusZoneGroup = new THREE.Group();
-    campusZoneGroup.name = 'campus-zones';
-    scene.add(campusZoneGroup);
-    const campusZonePreviewGroup = new THREE.Group();
-    campusZonePreviewGroup.name = 'campus-zones-preview';
-    scene.add(campusZonePreviewGroup);
-    const campusZoneCellGroup = new THREE.Group();
-    campusZoneCellGroup.name = 'campus-zone-cells';
-    scene.add(campusZoneCellGroup);
-    let campusZonePaintGrid = null;
-
-    function applyMapVisualStyle() {
-      const theme = getActiveMapTheme();
-      const yandex = isMapStyleYandex();
-      const sky = theme.sky ?? 0x87b8e0;
-      scene.background.setHex(sky);
-      if (scene.fog) {
-        scene.fog.color.setHex(sky);
-        scene.fog.density = theme.fogDensity ?? 0.002;
-      }
-      renderer.setClearColor(sky, 1);
-      hemi.color.setHex(theme.hemiSky ?? 0xdfefff);
-      hemi.groundColor.setHex(theme.hemiGround ?? 0x3d4f5c);
-      hemi.intensity = theme.hemiIntensity ?? 0.55;
-      dir.color.setHex(theme.dirColor ?? 0xfff5e6);
-      dir.intensity = theme.dirIntensity ?? 1.05;
-      point.intensity = theme.pointIntensity ?? 0.35;
-      point.color.setHex(theme.pointColor ?? 0xffaa66);
-      dir.castShadow = theme.castShadow !== false;
-      groundMat.color.setHex(theme.ground ?? 0x3d5c45);
-      grid.material.color.setHex(theme.gridMain ?? 0x1a3320);
-      grid.material.opacity = theme.gridOpacity ?? 0.35;
-      if (mapGroundUnderlay) {
-        underlayMat.color.setHex(theme.underlay ?? 0x3d4652);
-      }
-      if (mapGroundGrid) {
-        mapGroundGrid.material.color.setHex(theme.mapGridMain ?? 0x7a8798);
-        mapGroundGrid.material.opacity = theme.mapGridOpacity ?? 0.28;
-      }
-      document.body.classList.toggle('map-style-yandex', yandex);
-      if (districtMapObject) harmonizeDistrictMapMaterials(districtMapObject);
-    }
-
-    applyMapVisualStyle();
 
     // --- Building registry ---
     const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
@@ -3318,504 +3109,6 @@
     // Отдельная группа для предпросмотра редактируемой ломаной «Холл → точка».
     const pathDrawingPreviewGroup = new THREE.Group();
     scene.add(pathDrawingPreviewGroup);
-
-    // --- Зелёные зоны кампуса: клетки (кисть) + опционально контуры ---
-    const CAMPUS_ZONE_KINDS = ['lawn', 'park', 'courtyard'];
-    const campusZones = [];
-    const zonePaintCells = new Map();
-    let campusZoneEditMode = false;
-    let selectedCampusZoneId = null;
-    let zoneDrawBuffer = [];
-    let zoneDrawTool = 'brush';
-    let zoneBrushSize = 3;
-    let zoneBrushPainting = false;
-    let zoneBrushPointerId = null;
-    let zoneGridVisible = true;
-    const _campusGroundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-    const _campusPickPoint = new THREE.Vector3();
-    const _zoneCellMatrix = new THREE.Matrix4();
-
-    function campusZonesStorageKey() {
-      return MODEL_CONFIG.CAMPUS_ZONES_STORAGE_KEY || 'lsu-dal-campus-nav-campus-zones-v2';
-    }
-
-    function zoneCellSize() {
-      return Math.max(1, Number(MODEL_CONFIG.CAMPUS_ZONE_GRID_CELL) || 4);
-    }
-
-    function zoneCellKey(ix, iz) {
-      return `${ix},${iz}`;
-    }
-
-    function worldToZoneCell(x, z) {
-      const s = zoneCellSize();
-      return { ix: Math.floor(x / s), iz: Math.floor(z / s) };
-    }
-
-    function currentZonePaintKind() {
-      const sel = document.getElementById('zone-edit-kind');
-      const k = sel?.value || 'lawn';
-      return CAMPUS_ZONE_KINDS.includes(k) ? k : 'lawn';
-    }
-
-    function campusZonesPayload() {
-      return {
-        v: 2,
-        cellSize: zoneCellSize(),
-        cells: Object.fromEntries(zonePaintCells),
-        zones: campusZones.map((z) => ({
-          id: z.id,
-          label: z.label,
-          kind: z.kind,
-          points: z.points.map((p) => ({ x: p.x, z: p.z }))
-        }))
-      };
-    }
-
-    function applyCampusZonesPayload(parsed) {
-      zonePaintCells.clear();
-      campusZones.length = 0;
-      if (!parsed || typeof parsed !== 'object') return;
-      if (Array.isArray(parsed)) {
-        parsed.map(sanitizeCampusZone).filter(Boolean).forEach((z) => campusZones.push(z));
-        return;
-      }
-      if (parsed.cellSize && Number(parsed.cellSize) > 0) {
-        MODEL_CONFIG.CAMPUS_ZONE_GRID_CELL = Number(parsed.cellSize);
-      }
-      const cells = parsed.cells;
-      if (cells && typeof cells === 'object') {
-        for (const [key, kind] of Object.entries(cells)) {
-          const k = String(kind || '').toLowerCase();
-          if (CAMPUS_ZONE_KINDS.includes(k)) zonePaintCells.set(key, k);
-        }
-      }
-      const list = Array.isArray(parsed.zones) ? parsed.zones : [];
-      list.map(sanitizeCampusZone).filter(Boolean).forEach((z) => campusZones.push(z));
-    }
-
-    function zoneColorForKind(kind) {
-      if (kind === 'park') return 0x8fcf88;
-      if (kind === 'courtyard') return 0xa8d4a8;
-      return 0x9ed18a;
-    }
-
-    function sanitizeCampusZone(z) {
-      if (!z || typeof z !== 'object') return null;
-      const id = String(z.id || '').trim();
-      const label = String(z.label || '').trim() || 'Зона';
-      let kind = String(z.kind || 'lawn').toLowerCase();
-      if (!CAMPUS_ZONE_KINDS.includes(kind)) kind = 'lawn';
-      const points = Array.isArray(z.points)
-        ? z.points
-            .map((p) => ({ x: Number(p?.x), z: Number(p?.z) }))
-            .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z))
-        : [];
-      if (points.length < 3) return null;
-      return { id, label, kind, points };
-    }
-
-    function makeCampusZoneId() {
-      return `zone-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
-    }
-
-    function clearCampusZonePreview() {
-      while (campusZonePreviewGroup.children.length) {
-        const c = campusZonePreviewGroup.children[0];
-        campusZonePreviewGroup.remove(c);
-        disposeSubtree(c);
-      }
-    }
-
-    function refreshCampusZonePreview() {
-      clearCampusZonePreview();
-      if (!zoneDrawBuffer.length) return;
-      const y = Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045;
-      const pts = zoneDrawBuffer.map((p) => new THREE.Vector3(p.x, y + 0.02, p.z));
-      if (pts.length >= 2) {
-        const geo = new THREE.BufferGeometry().setFromPoints(pts);
-        const line = new THREE.Line(
-          geo,
-          new THREE.LineBasicMaterial({ color: 0x22c55e, depthTest: false })
-        );
-        line.renderOrder = 3;
-        campusZonePreviewGroup.add(line);
-      }
-      for (const p of pts) {
-        const s = new THREE.Mesh(
-          new THREE.SphereGeometry(0.35, 8, 8),
-          new THREE.MeshBasicMaterial({ color: 0x16a34a, depthTest: false })
-        );
-        s.position.copy(p);
-        s.renderOrder = 4;
-        campusZonePreviewGroup.add(s);
-      }
-    }
-
-    function buildCampusZoneMesh(zone, selected) {
-      const shape = new THREE.Shape();
-      zone.points.forEach((p, i) => {
-        if (i === 0) shape.moveTo(p.x, p.z);
-        else shape.lineTo(p.x, p.z);
-      });
-      shape.closePath();
-      const geom = new THREE.ShapeGeometry(shape);
-      geom.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshBasicMaterial({
-        color: zoneColorForKind(zone.kind),
-        transparent: true,
-        opacity: selected ? 0.9 : 0.78,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1
-      });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.position.y = Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045;
-      mesh.renderOrder = 2;
-      mesh.userData.campusZoneId = zone.id;
-      return mesh;
-    }
-
-    function refreshCampusZoneCellVisuals() {
-      while (campusZoneCellGroup.children.length) {
-        const c = campusZoneCellGroup.children[0];
-        campusZoneCellGroup.remove(c);
-        disposeSubtree(c);
-      }
-      if (!zonePaintCells.size) return;
-      const byKind = new Map();
-      zonePaintCells.forEach((kind, key) => {
-        if (!byKind.has(kind)) byKind.set(kind, []);
-        const parts = key.split(',');
-        const ix = Number(parts[0]);
-        const iz = Number(parts[1]);
-        if (Number.isFinite(ix) && Number.isFinite(iz)) byKind.get(kind).push({ ix, iz });
-      });
-      const s = zoneCellSize();
-      const y = Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045;
-      const geo = new THREE.BoxGeometry(s * 0.96, 0.1, s * 0.96);
-      for (const [kind, cells] of byKind) {
-        if (!cells.length) continue;
-        const mat = new THREE.MeshBasicMaterial({
-          color: zoneColorForKind(kind),
-          transparent: true,
-          opacity: 0.84,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -2,
-          polygonOffsetUnits: -2
-        });
-        const mesh = new THREE.InstancedMesh(geo, mat, cells.length);
-        cells.forEach((c, i) => {
-          _zoneCellMatrix.makeTranslation((c.ix + 0.5) * s, y, (c.iz + 0.5) * s);
-          mesh.setMatrixAt(i, _zoneCellMatrix);
-        });
-        mesh.instanceMatrix.needsUpdate = true;
-        mesh.renderOrder = 2;
-        campusZoneCellGroup.add(mesh);
-      }
-    }
-
-    function refreshCampusZonePaintGrid() {
-      const show = campusZoneEditMode && zoneGridVisible && zoneDrawTool !== 'polygon';
-      if (!show) {
-        if (campusZonePaintGrid) campusZonePaintGrid.visible = false;
-        return;
-      }
-      const ext = Number(MODEL_CONFIG.CAMPUS_ZONE_GRID_EXTENT) || 520;
-      const cell = zoneCellSize();
-      const divs = Math.max(8, Math.round(ext / cell));
-      if (!campusZonePaintGrid) {
-        campusZonePaintGrid = new THREE.GridHelper(ext, divs, 0x8fa8c8, 0xdce4ef);
-        campusZonePaintGrid.material.transparent = true;
-        campusZonePaintGrid.material.opacity = 0.45;
-        campusZonePaintGrid.position.y = 0.02;
-        campusZonePaintGrid.renderOrder = 1;
-        scene.add(campusZonePaintGrid);
-      } else {
-        scene.remove(campusZonePaintGrid);
-        disposeSubtree(campusZonePaintGrid);
-        campusZonePaintGrid = new THREE.GridHelper(ext, divs, 0x8fa8c8, 0xdce4ef);
-        campusZonePaintGrid.material.transparent = true;
-        campusZonePaintGrid.material.opacity = 0.45;
-        campusZonePaintGrid.position.y = 0.02;
-        campusZonePaintGrid.renderOrder = 1;
-        scene.add(campusZonePaintGrid);
-      }
-      campusZonePaintGrid.visible = true;
-    }
-
-    function paintZoneAtWorldPoint(pt, erase) {
-      if (!pt) return;
-      const { ix, iz } = worldToZoneCell(pt.x, pt.z);
-      const half = Math.max(0, Math.floor((zoneBrushSize - 1) / 2));
-      const kind = erase ? null : currentZonePaintKind();
-      let changed = false;
-      for (let dx = -half; dx <= half; dx++) {
-        for (let dz = -half; dz <= half; dz++) {
-          const key = zoneCellKey(ix + dx, iz + dz);
-          if (kind === null) {
-            if (zonePaintCells.has(key)) {
-              zonePaintCells.delete(key);
-              changed = true;
-            }
-          } else if (zonePaintCells.get(key) !== kind) {
-            zonePaintCells.set(key, kind);
-            changed = true;
-          }
-        }
-      }
-      if (changed) {
-        saveCampusZonesToStorage();
-        refreshCampusZoneCellVisuals();
-        refreshCampusZoneEditorUi();
-      }
-    }
-
-    function refreshCampusZoneVisuals() {
-      while (campusZoneGroup.children.length) {
-        const c = campusZoneGroup.children[0];
-        campusZoneGroup.remove(c);
-        disposeSubtree(c);
-      }
-      for (const z of campusZones) {
-        const mesh = buildCampusZoneMesh(z, z.id === selectedCampusZoneId);
-        if (mesh) campusZoneGroup.add(mesh);
-      }
-      refreshCampusZoneCellVisuals();
-      refreshCampusZonePreview();
-      refreshCampusZonePaintGrid();
-      syncSceneLayerOrder();
-    }
-
-    /** Зоны — над макетом района, корпуса — над зонами. */
-    function syncSceneLayerOrder() {
-      if (!campusZoneGroup.parent) return;
-      if (campusZonePaintGrid?.parent) {
-        scene.remove(campusZonePaintGrid);
-        scene.add(campusZonePaintGrid);
-      }
-      scene.remove(campusZoneCellGroup);
-      scene.remove(campusZoneGroup);
-      scene.remove(campusZonePreviewGroup);
-      scene.add(campusZoneCellGroup);
-      scene.add(campusZoneGroup);
-      scene.add(campusZonePreviewGroup);
-      buildingMeshes.forEach((root) => {
-        if (root.parent === scene) {
-          scene.remove(root);
-          scene.add(root);
-        }
-      });
-      contextBuildingMeshes.forEach((root) => {
-        if (root.parent === scene) {
-          scene.remove(root);
-          scene.add(root);
-        }
-      });
-      if (roomMarkerGroup?.parent === scene) {
-        scene.remove(roomMarkerGroup);
-        scene.add(roomMarkerGroup);
-      }
-      if (typeof floorPlanRoot !== 'undefined' && floorPlanRoot.parent === scene) {
-        scene.remove(floorPlanRoot);
-        scene.add(floorPlanRoot);
-      }
-    }
-
-    function saveCampusZonesToStorage() {
-      try {
-        localStorage.setItem(campusZonesStorageKey(), JSON.stringify(campusZonesPayload()));
-      } catch (err) {
-        console.warn('[LSU Nav] Не удалось сохранить зоны карты', err);
-      }
-    }
-
-    async function applyPersistedCampusZones() {
-      const path = MODEL_CONFIG.CAMPUS_ZONES_BACKUP_PATH;
-      if (path) {
-        try {
-          const url = new URL(path, window.location.href).href;
-          const res = await fetch(url, { cache: 'no-cache' });
-          if (res.ok) {
-            applyCampusZonesPayload(await res.json());
-          }
-        } catch (_) {}
-      }
-      try {
-        const raw = localStorage.getItem(campusZonesStorageKey());
-        if (raw) applyCampusZonesPayload(JSON.parse(raw));
-      } catch (err) {
-        console.warn('[LSU Nav] Не удалось прочитать зоны из localStorage', err);
-      }
-      try {
-        const legacy = localStorage.getItem('lsu-dal-campus-nav-campus-zones-v1');
-        if (legacy && zonePaintCells.size === 0 && campusZones.length === 0) {
-          applyCampusZonesPayload(JSON.parse(legacy));
-        }
-      } catch (_) {}
-      refreshCampusZoneVisuals();
-      refreshCampusZoneEditorUi();
-    }
-
-    function selectedCampusZone() {
-      if (!selectedCampusZoneId) return null;
-      return campusZones.find((z) => z.id === selectedCampusZoneId) || null;
-    }
-
-    function refreshCampusZoneEditorUi() {
-      const panel = document.getElementById('zone-editor-panel');
-      const sel = document.getElementById('zone-edit-select');
-      const labelInp = document.getElementById('zone-edit-label');
-      const status = document.getElementById('zone-draw-status');
-      if (!panel) return;
-      panel.hidden = !campusZoneEditMode;
-      if (!sel) return;
-      sel.innerHTML = '';
-      campusZones.forEach((z) => {
-        sel.add(new Option(z.label, z.id));
-      });
-      const z = selectedCampusZone();
-      if (z) {
-        sel.value = z.id;
-        if (labelInp) labelInp.value = z.label;
-        const pk = document.getElementById('zone-polygon-kind');
-        if (pk) pk.value = z.kind;
-      } else if (labelInp) {
-        labelInp.value = '';
-      }
-      const brushBlock = document.getElementById('zone-brush-tools');
-      const polyBlock = document.getElementById('zone-polygon-tools');
-      if (brushBlock) brushBlock.hidden = zoneDrawTool === 'polygon';
-      if (polyBlock) polyBlock.hidden = zoneDrawTool !== 'polygon';
-      if (status) {
-        if (zoneDrawTool === 'polygon') {
-          status.textContent = zoneDrawBuffer.length
-            ? `Контур: ${zoneDrawBuffer.length} точек → «Замкнуть контур».`
-            : 'Клик по карте — вершины контура (мин. 3).';
-        } else if (zoneDrawTool === 'eraser') {
-          status.textContent = `Ластик ${zoneBrushSize}×${zoneBrushSize}. Зажмите ЛКМ и ведите. Клеток: ${zonePaintCells.size}.`;
-        } else {
-          status.textContent = `Кисть ${zoneBrushSize}×${zoneBrushSize}, тип «${currentZonePaintKind()}». Зажмите ЛКМ и ведите. Клеток: ${zonePaintCells.size}.`;
-        }
-      }
-    }
-
-    function syncZoneDrawToolFromUi() {
-      const t = document.getElementById('zone-draw-tool')?.value || 'brush';
-      zoneDrawTool = t === 'eraser' || t === 'polygon' ? t : 'brush';
-      const sz = parseInt(document.getElementById('zone-brush-size')?.value, 10);
-      if (Number.isFinite(sz) && sz > 0) zoneBrushSize = sz;
-      zoneGridVisible = document.getElementById('toggle-zone-grid')?.checked !== false;
-      refreshCampusZonePaintGrid();
-      refreshCampusZoneEditorUi();
-    }
-
-    function pickPointOnCampusGround(clientX, clientY) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, activeCamera);
-      return raycaster.ray.intersectPlane(_campusGroundPlane, _campusPickPoint)
-        ? _campusPickPoint.clone()
-        : null;
-    }
-
-    function finishZoneDrawing() {
-      if (zoneDrawBuffer.length < 3) {
-        appendInfo('Нужно минимум 3 точки для зоны.', true);
-        return;
-      }
-      const labelInp = document.getElementById('zone-edit-label');
-      const kindSel = document.getElementById('zone-polygon-kind');
-      const label = labelInp?.value?.trim() || `Зона ${campusZones.length + 1}`;
-      const kind = CAMPUS_ZONE_KINDS.includes(kindSel?.value) ? kindSel.value : 'lawn';
-      const zone = {
-        id: makeCampusZoneId(),
-        label,
-        kind,
-        points: zoneDrawBuffer.map((p) => ({
-          x: Number(p.x.toFixed(2)),
-          z: Number(p.z.toFixed(2))
-        }))
-      };
-      campusZones.push(zone);
-      selectedCampusZoneId = zone.id;
-      zoneDrawBuffer = [];
-      saveCampusZonesToStorage();
-      refreshCampusZoneVisuals();
-      refreshCampusZoneEditorUi();
-      appendInfo(`Зона «${label}» добавлена (${zone.points.length} вершин).`, false);
-    }
-
-    function tryHandleCampusZoneClick(ev) {
-      if (!campusZoneEditMode || roomMarkupMode) return false;
-      const pt = pickPointOnCampusGround(ev.clientX, ev.clientY);
-      if (!pt) {
-        appendInfo('Не удалось определить точку на карте.', true);
-        return true;
-      }
-      if (zoneDrawTool === 'brush' || zoneDrawTool === 'eraser') {
-        zoneBrushPainting = true;
-        zoneBrushPointerId = ev.pointerId ?? null;
-        if (renderer?.domElement?.setPointerCapture && ev.pointerId != null) {
-          renderer.domElement.setPointerCapture(ev.pointerId);
-        }
-        paintZoneAtWorldPoint(pt, zoneDrawTool === 'eraser');
-        return true;
-      }
-      zoneDrawBuffer.push({ x: pt.x, z: pt.z });
-      refreshCampusZonePreview();
-      refreshCampusZoneEditorUi();
-      return true;
-    }
-
-    function handleCampusZonePointerMove(ev) {
-      if (!campusZoneEditMode || !zoneBrushPainting || roomMarkupMode) return;
-      if (zoneDrawTool !== 'brush' && zoneDrawTool !== 'eraser') return;
-      const pt = pickPointOnCampusGround(ev.clientX, ev.clientY);
-      if (pt) paintZoneAtWorldPoint(pt, zoneDrawTool === 'eraser');
-    }
-
-    function stopCampusZoneBrush() {
-      if (!zoneBrushPainting) return;
-      zoneBrushPainting = false;
-      if (
-        zoneBrushPointerId != null &&
-        renderer?.domElement?.hasPointerCapture?.(zoneBrushPointerId) &&
-        renderer?.domElement?.releasePointerCapture
-      ) {
-        renderer.domElement.releasePointerCapture(zoneBrushPointerId);
-      }
-      zoneBrushPointerId = null;
-    }
-
-    function setCampusZoneEditMode(on) {
-      campusZoneEditMode = on;
-      const panel = document.getElementById('zone-editor-panel');
-      if (panel) panel.hidden = !on;
-      if (controls) {
-        if (on) {
-          controls.enableRotate = false;
-          controls.enablePan = false;
-        } else if (!roomMarkupMode) {
-          controls.enableRotate = true;
-          controls.enablePan = true;
-        }
-      }
-      if (!on) {
-        zoneDrawBuffer = [];
-        stopCampusZoneBrush();
-        clearCampusZonePreview();
-        if (campusZonePaintGrid) campusZonePaintGrid.visible = false;
-      } else {
-        syncZoneDrawToolFromUi();
-      }
-      refreshCampusZoneVisuals();
-      refreshCampusZoneEditorUi();
-    }
 
     let roomMarkupMode = false;
     let selectedRoomMarkupId = null;
@@ -5115,7 +4408,6 @@
     }
 
     function onPointerMove(ev) {
-      handleCampusZonePointerMove(ev);
       if (!roomMarkupMode || !draggingRoomMarkupId) return;
       const b = currentEditorBuilding();
       const r = selectedMarkupRoom();
@@ -5139,7 +4431,6 @@
     }
 
     function onPointerUp() {
-      stopCampusZoneBrush();
       if (!draggingRoomMarkupId) return;
       draggingRoomMarkupId = null;
       if (
@@ -5230,6 +4521,490 @@
       }
     }
 
+
+    // --- Зелёные зоны (многоугольник по точкам, как Конструктор Я.Карт) ---
+    const CAMPUS_ZONE_KINDS = ['lawn', 'park', 'courtyard'];
+    const campusZonePolygons = [];
+    let campusZoneIdSeq = 1;
+    let selectedCampusZoneId = null;
+    let zonePolygonDraft = null;
+    let campusZoneEditMode = false;
+    const _campusGroundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const _campusPickPoint = new THREE.Vector3();
+
+    const campusZoneMergedGroup = new THREE.Group();
+    campusZoneMergedGroup.name = 'campus-green-zones';
+    scene.add(campusZoneMergedGroup);
+    const campusZonePreviewGroup = new THREE.Group();
+    campusZonePreviewGroup.name = 'campus-green-zones-preview';
+    scene.add(campusZonePreviewGroup);
+
+    function zoneKindLabel(kind) {
+      if (kind === 'park') return 'Парк';
+      if (kind === 'courtyard') return 'Двор';
+      return 'Газон';
+    }
+
+    function currentZonePaintKind() {
+      const sel = document.getElementById('zone-edit-kind');
+      const k = sel?.value || 'lawn';
+      return CAMPUS_ZONE_KINDS.includes(k) ? k : 'lawn';
+    }
+
+    function currentZoneDraftName() {
+      return (document.getElementById('zone-edit-name')?.value || '').trim();
+    }
+
+    function zoneColorForKind(kind) {
+      if (kind === 'park') return 0xa8d8a0;
+      if (kind === 'courtyard') return 0xb5dcc0;
+      return 0xb0ddb0;
+    }
+
+    function zoneFillOpacity() {
+      return 0.58;
+    }
+
+    function zoneCloseRadius() {
+      return Math.max(1, Number(MODEL_CONFIG.CAMPUS_ZONE_CLOSE_VERTEX_RADIUS) || 4);
+    }
+
+    function campusZonesStorageKey() {
+      return MODEL_CONFIG.CAMPUS_ZONES_STORAGE_KEY || 'lsu-dal-campus-nav-campus-zones-v3';
+    }
+
+    function serializeCampusZone(z) {
+      return {
+        id: z.id,
+        name: z.name || '',
+        kind: z.kind,
+        points: z.points.map((p) => [Number(p.x.toFixed(2)), Number(p.z.toFixed(2))])
+      };
+    }
+
+    function campusZonesPayload() {
+      return { v: 3, zones: campusZonePolygons.map(serializeCampusZone) };
+    }
+
+    function campusZoneById(id) {
+      return campusZonePolygons.find((z) => z.id === id) || null;
+    }
+
+    function importV2CellsAsPolygons(cells, cellSize) {
+      const s = Math.max(1, Number(cellSize) || 4);
+      const set = new Set(Object.keys(cells));
+      const cellKey = (ix, iz) => `${ix},${iz}`;
+      const seen = new Set();
+      for (const key of set) {
+        if (seen.has(key)) continue;
+        const stack = [key];
+        const comp = [];
+        seen.add(key);
+        while (stack.length) {
+          const k = stack.pop();
+          comp.push(k);
+          const [ix, iz] = k.split(',').map(Number);
+          for (const [dx, dz] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1]
+          ]) {
+            const nk = cellKey(ix + dx, iz + dz);
+            if (set.has(nk) && !seen.has(nk)) {
+              seen.add(nk);
+              stack.push(nk);
+            }
+          }
+        }
+        const kind = String(cells[comp[0]] || 'lawn').toLowerCase();
+        const loop = boundaryLoopFromCellGroup(comp, s);
+        if (loop.length >= 3) {
+          campusZonePolygons.push({
+            id: campusZoneIdSeq++,
+            name: '',
+            kind: CAMPUS_ZONE_KINDS.includes(kind) ? kind : 'lawn',
+            points: loop.map(([x, z]) => ({ x, z }))
+          });
+        }
+      }
+    }
+
+    function boundaryLoopFromCellGroup(keys, cellSize) {
+      const set = new Set(keys);
+      const cellKey = (ix, iz) => `${ix},${iz}`;
+      const ptKey = (x, z) => `${x.toFixed(4)},${z.toFixed(4)}`;
+      const segments = [];
+      for (const key of set) {
+        const [ix, iz] = key.split(',').map(Number);
+        const x0 = ix * cellSize;
+        const z0 = iz * cellSize;
+        const x1 = x0 + cellSize;
+        const z1 = z0 + cellSize;
+        if (!set.has(cellKey(ix, iz - 1))) segments.push([[x0, z0], [x1, z0]]);
+        if (!set.has(cellKey(ix + 1, iz))) segments.push([[x1, z0], [x1, z1]]);
+        if (!set.has(cellKey(ix, iz + 1))) segments.push([[x1, z1], [x0, z1]]);
+        if (!set.has(cellKey(ix - 1, iz))) segments.push([[x0, z1], [x0, z0]]);
+      }
+      if (!segments.length) return [];
+      const adj = new Map();
+      for (const [[ax, az], [bx, bz]] of segments) {
+        const ka = ptKey(ax, az);
+        if (!adj.has(ka)) adj.set(ka, []);
+        adj.get(ka).push(ptKey(bx, bz));
+      }
+      const start = segments[0][0];
+      const startK = ptKey(start[0], start[1]);
+      const loop = [[start[0], start[1]]];
+      let curK = ptKey(segments[0][1][0], segments[0][1][1]);
+      const used = new Set([`${startK}|${curK}`]);
+      let guard = 0;
+      while (guard++ < segments.length + 4) {
+        const parts = curK.split(',');
+        loop.push([Number(parts[0]), Number(parts[1])]);
+        if (curK === startK && loop.length > 2) break;
+        const outs = adj.get(curK) || [];
+        let next = null;
+        for (const nk of outs) {
+          const eid = `${curK}|${nk}`;
+          if (!used.has(eid)) {
+            next = nk;
+            used.add(eid);
+            break;
+          }
+        }
+        if (!next) break;
+        curK = next;
+      }
+      if (loop.length > 1) loop.pop();
+      return loop;
+    }
+
+    function applyCampusZonesPayload(parsed) {
+      campusZonePolygons.length = 0;
+      zonePolygonDraft = null;
+      selectedCampusZoneId = null;
+      if (!parsed || typeof parsed !== 'object') return;
+      if (parsed.v === 3 && Array.isArray(parsed.zones)) {
+        for (const raw of parsed.zones) {
+          const kind = String(raw.kind || 'lawn').toLowerCase();
+          if (!CAMPUS_ZONE_KINDS.includes(kind)) continue;
+          const points = [];
+          for (const pt of raw.points || []) {
+            if (Array.isArray(pt) && pt.length >= 2) {
+              points.push({ x: Number(pt[0]), z: Number(pt[1]) });
+            } else if (pt && typeof pt === 'object') {
+              points.push({ x: Number(pt.x), z: Number(pt.z) });
+            }
+          }
+          if (points.length < 3) continue;
+          campusZonePolygons.push({
+            id: Number(raw.id) || campusZoneIdSeq++,
+            name: String(raw.name || ''),
+            kind,
+            points
+          });
+        }
+        campusZoneIdSeq =
+          campusZonePolygons.reduce((m, z) => Math.max(m, Number(z.id) || 0), 0) + 1;
+        return;
+      }
+      if (parsed.cells && typeof parsed.cells === 'object') {
+        importV2CellsAsPolygons(parsed.cells, parsed.cellSize);
+        campusZoneIdSeq =
+          campusZonePolygons.reduce((m, z) => Math.max(m, Number(z.id) || 0), 0) + 1;
+      }
+    }
+
+    async function applyPersistedCampusZones() {
+      try {
+        let raw = localStorage.getItem(campusZonesStorageKey());
+        if (!raw) raw = localStorage.getItem('lsu-dal-campus-nav-campus-zones-v2');
+        if (raw) applyCampusZonesPayload(JSON.parse(raw));
+      } catch (e) {
+        console.warn('[LSU Nav] campus zones localStorage', e);
+      }
+      const backupPath = MODEL_CONFIG.CAMPUS_ZONES_BACKUP_PATH;
+      if (!backupPath || campusZonePolygons.length > 0) return;
+      try {
+        const url = resolveModelPath(backupPath);
+        const res = await fetch(url);
+        if (!res.ok) return;
+        applyCampusZonesPayload(await res.json());
+      } catch (e) {
+        console.warn('[LSU Nav] campus zones backup', e);
+      }
+    }
+
+    function saveCampusZonesToStorage() {
+      try {
+        localStorage.setItem(campusZonesStorageKey(), JSON.stringify(campusZonesPayload()));
+      } catch (e) {
+        console.warn('[LSU Nav] save campus zones', e);
+      }
+    }
+
+    function buildGreenZoneMesh(points, kind, opts = {}) {
+      const ring = points.map((p) => ({ x: p.x, z: p.z }));
+      if (ring.length < 3) return null;
+      const surfaceY = Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045;
+      const shape = new THREE.Shape();
+      ring.forEach((p, i) => {
+        if (i === 0) shape.moveTo(p.x, p.z);
+        else shape.lineTo(p.x, p.z);
+      });
+      shape.closePath();
+      const geom = new THREE.ShapeGeometry(shape);
+      const pos = geom.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        pos.setXYZ(i, pos.getX(i), surfaceY, pos.getY(i));
+      }
+      pos.needsUpdate = true;
+      geom.computeVertexNormals();
+      const mat = new THREE.MeshBasicMaterial({
+        color: zoneColorForKind(kind),
+        transparent: true,
+        opacity: opts.preview ? 0.38 : zoneFillOpacity(),
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.renderOrder = opts.preview ? 3 : 2;
+      if (opts.zoneId != null) mesh.userData.campusZoneId = opts.zoneId;
+      return mesh;
+    }
+
+    function refreshCampusZoneMergedVisuals() {
+      while (campusZoneMergedGroup.children.length) {
+        const c = campusZoneMergedGroup.children[0];
+        campusZoneMergedGroup.remove(c);
+        disposeSubtree(c);
+      }
+      for (const zone of campusZonePolygons) {
+        const mesh = buildGreenZoneMesh(zone.points, zone.kind, { zoneId: zone.id });
+        if (mesh) campusZoneMergedGroup.add(mesh);
+      }
+      syncCampusZoneLayerOrder();
+      refreshCampusZonePreview();
+    }
+
+    function clearCampusZonePreview() {
+      while (campusZonePreviewGroup.children.length) {
+        const c = campusZonePreviewGroup.children[0];
+        campusZonePreviewGroup.remove(c);
+        disposeSubtree(c);
+      }
+    }
+
+    function refreshCampusZonePreview() {
+      clearCampusZonePreview();
+      const y = (Number(MODEL_CONFIG.CAMPUS_ZONE_SURFACE_Y) || 0.045) + 0.04;
+      if (zonePolygonDraft?.points.length) {
+        const pts = zonePolygonDraft.points;
+        if (pts.length >= 2) {
+          const positions = [];
+          for (const p of pts) positions.push(p.x, y, p.z);
+          const lineGeom = new THREE.BufferGeometry();
+          lineGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          campusZonePreviewGroup.add(
+            new THREE.Line(
+              lineGeom,
+              new THREE.LineBasicMaterial({ color: 0x2e7d32, transparent: true, opacity: 0.9 })
+            )
+          );
+        }
+        pts.forEach((p, i) => {
+          const dot = new THREE.Mesh(
+            new THREE.SphereGeometry(i === 0 ? 1.1 : 0.75, 10, 10),
+            new THREE.MeshBasicMaterial({ color: i === 0 ? 0x1b5e20 : 0x43a047 })
+          );
+          dot.position.set(p.x, y, p.z);
+          campusZonePreviewGroup.add(dot);
+        });
+        if (pts.length >= 3) {
+          const preview = buildGreenZoneMesh(pts, zonePolygonDraft.kind, { preview: true });
+          if (preview) campusZonePreviewGroup.add(preview);
+        }
+      }
+      if (selectedCampusZoneId != null) {
+        const zone = campusZoneById(selectedCampusZoneId);
+        if (zone) {
+          zone.points.forEach((p) => {
+            const dot = new THREE.Mesh(
+              new THREE.SphereGeometry(0.55, 8, 8),
+              new THREE.MeshBasicMaterial({ color: 0xffc107 })
+            );
+            dot.position.set(p.x, y, p.z);
+            campusZonePreviewGroup.add(dot);
+          });
+        }
+      }
+      syncCampusZoneLayerOrder();
+    }
+
+    function syncCampusZoneLayerOrder() {
+      if (!campusZoneMergedGroup.parent) return;
+      scene.remove(campusZoneMergedGroup);
+      scene.remove(campusZonePreviewGroup);
+      scene.add(campusZoneMergedGroup);
+      scene.add(campusZonePreviewGroup);
+      buildingMeshes.forEach((root) => {
+        if (root.parent === scene) {
+          scene.remove(root);
+          scene.add(root);
+        }
+      });
+    }
+
+    function pickPointOnCampusGround(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, activeCamera);
+      return raycaster.ray.intersectPlane(_campusGroundPlane, _campusPickPoint)
+        ? _campusPickPoint.clone()
+        : null;
+    }
+
+    function ensureZonePolygonDraft() {
+      if (!zonePolygonDraft) {
+        zonePolygonDraft = {
+          kind: currentZonePaintKind(),
+          name: currentZoneDraftName(),
+          points: []
+        };
+      }
+    }
+
+    function cancelZonePolygonDraft() {
+      zonePolygonDraft = null;
+      refreshCampusZonePreview();
+      refreshCampusZoneEditorUi();
+    }
+
+    function undoZonePolygonVertex() {
+      if (!zonePolygonDraft?.points.length) return;
+      zonePolygonDraft.points.pop();
+      if (!zonePolygonDraft.points.length) zonePolygonDraft = null;
+      refreshCampusZonePreview();
+      refreshCampusZoneEditorUi();
+    }
+
+    function finishZonePolygonDraft() {
+      if (!zonePolygonDraft || zonePolygonDraft.points.length < 3) return false;
+      campusZonePolygons.push({
+        id: campusZoneIdSeq++,
+        name: zonePolygonDraft.name || currentZoneDraftName(),
+        kind: zonePolygonDraft.kind,
+        points: zonePolygonDraft.points.map((p) => ({ x: p.x, z: p.z }))
+      });
+      zonePolygonDraft = null;
+      saveCampusZonesToStorage();
+      refreshCampusZoneMergedVisuals();
+      refreshCampusZoneEditorUi();
+      return true;
+    }
+
+    function addZonePolygonVertex(pt) {
+      if (!pt) return;
+      ensureZonePolygonDraft();
+      zonePolygonDraft.kind = currentZonePaintKind();
+      zonePolygonDraft.name = currentZoneDraftName();
+      const pts = zonePolygonDraft.points;
+      if (pts.length >= 3) {
+        const first = pts[0];
+        if (Math.hypot(first.x - pt.x, first.z - pt.z) <= zoneCloseRadius()) {
+          finishZonePolygonDraft();
+          return;
+        }
+      }
+      const last = pts[pts.length - 1];
+      if (last && Math.hypot(last.x - pt.x, last.z - pt.z) < 0.35) return;
+      pts.push({ x: pt.x, z: pt.z });
+      refreshCampusZonePreview();
+      refreshCampusZoneEditorUi();
+    }
+
+    function deleteCampusZone(id) {
+      const idx = campusZonePolygons.findIndex((z) => z.id === id);
+      if (idx < 0) return;
+      campusZonePolygons.splice(idx, 1);
+      if (selectedCampusZoneId === id) selectedCampusZoneId = null;
+      saveCampusZonesToStorage();
+      refreshCampusZoneMergedVisuals();
+      refreshCampusZoneEditorUi();
+    }
+
+    function populateCampusZoneListSelect() {
+      const sel = document.getElementById('zone-list-select');
+      if (!sel) return;
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">— выберите зону —</option>';
+      campusZonePolygons.forEach((z, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(z.id);
+        const title = z.name?.trim() || `Зона ${i + 1}`;
+        opt.textContent = `${title} (${zoneKindLabel(z.kind)}, ${z.points.length} т.)`;
+        sel.appendChild(opt);
+      });
+      if (prev && campusZoneById(Number(prev))) sel.value = prev;
+      else if (selectedCampusZoneId != null) sel.value = String(selectedCampusZoneId);
+    }
+
+    function refreshCampusZoneEditorUi() {
+      const panel = document.getElementById('zone-editor-panel');
+      const status = document.getElementById('zone-draw-status');
+      if (panel) panel.hidden = !campusZoneEditMode;
+      populateCampusZoneListSelect();
+      const nDraft = zonePolygonDraft?.points.length || 0;
+      if (status) {
+        if (nDraft === 0) {
+          status.textContent = `Клик по карте — первая вершина. Зон на карте: ${campusZonePolygons.length}.`;
+        } else if (nDraft < 3) {
+          status.textContent = `Вершин: ${nDraft}. Нужно минимум 3, затем «Замкнуть» или клик у первой точки.`;
+        } else {
+          status.textContent = `Вершин: ${nDraft}. «Замкнуть полигон» или клик у зелёной первой точки.`;
+        }
+      }
+    }
+
+    function tryHandleCampusZoneClick(ev) {
+      if (!campusZoneEditMode || roomMarkupMode) return false;
+      const pt = pickPointOnCampusGround(ev.clientX, ev.clientY);
+      if (!pt) return false;
+      addZonePolygonVertex(pt);
+      return true;
+    }
+
+    function setCampusZoneEditMode(on) {
+      campusZoneEditMode = !!on;
+      if (campusZoneEditMode) {
+        roomMarkupMode = false;
+        const rt = document.getElementById('toggle-room-markup-mode');
+        if (rt) rt.checked = false;
+        if (controls) {
+          controls.enableRotate = false;
+          controls.enablePan = false;
+        }
+      } else {
+        zonePolygonDraft = null;
+        selectedCampusZoneId = null;
+        if (controls) {
+          if (!roomMarkupMode) {
+            controls.enableRotate = true;
+            controls.enablePan = true;
+          } else {
+            controls.enableRotate = true;
+          }
+        }
+      }
+      refreshCampusZoneMergedVisuals();
+      refreshCampusZoneEditorUi();
+    }
+
     async function loadCampus() {
       beginLoad('Загрузка моделей корпусов…');
       const fpu = document.getElementById('floor-plans-ui');
@@ -5242,8 +5017,9 @@
           MODEL_CONFIG.ENABLE_FLOOR_PLANS_UI === true && anyBuildingHasManualFloorToggle()
         );
       }
-      await applyPersistedCampusZones();
       await applyPersistedRoomMarkup();
+      await applyPersistedCampusZones();
+      refreshCampusZoneMergedVisuals();
       indexRooms();
       await loadDistrictMapIfConfigured();
       const palette = [0x8b9dc3, 0xa68bc4, 0x7eb8da];
@@ -5311,7 +5087,6 @@
                 }
                 o.userData.buildingId = b.id;
               });
-              harmonizeCampusBuildingMaterials(root, i);
               root.userData.buildingVisual = root;
               root.userData.postFitUniformScale = 1;
             } else {
@@ -5339,7 +5114,6 @@
               }
               o.userData.buildingId = b.id;
             });
-            harmonizeCampusBuildingMaterials(sceneModel, i);
             root.add(sceneModel);
             root.userData.buildingVisual = sceneModel;
           } else {
@@ -5414,19 +5188,14 @@
             : '';
         warnEl.innerHTML = `Показана заглушка-куб для <strong>${fallbackCount}</strong> из ${n} корпусов.${embedHint} Если задан отдельный <code>modelPath</code> — проверьте путь и папку <code>3D/</code>. Консоль: F12.`;
       }
+      syncCampusZoneLayerOrder();
       endLoad();
-      buildingMeshes.forEach((root, i) => {
-        const bid = root.userData?.buildingId;
-        const idx = MODEL_CONFIG.buildings.findIndex((b) => b.id === bid);
-        harmonizeCampusBuildingMaterials(root, idx >= 0 ? idx : i);
-      });
-      applyMapVisualStyle();
-      refreshCampusZoneVisuals();
       populateRouteSelects();
       populateBuildingSelect();
       syncFloorPlanToggleUi();
       applyFloorInteriorLod();
       await loadSurroundingBuildings();
+      syncCampusZoneLayerOrder();
     }
 
     async function loadSurroundingBuildings() {
@@ -6185,12 +5954,14 @@
 
     function onPointerDown(ev) {
       if (ev.button !== 0) return;
+      if (campusZoneEditMode && !roomMarkupMode) {
+        if (tryHandleCampusZoneClick(ev)) return;
+      }
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, activeCamera);
       if (tryHandleRoomMarkupClick(ev)) return;
-      if (tryHandleCampusZoneClick(ev)) return;
       const roots = [...buildingMeshes.values(), ...contextBuildingMeshes.values()];
       const hits = raycaster.intersectObjects(roots, true);
       if (!hits.length) return;
@@ -6453,139 +6224,58 @@
       void updateFloorPlan();
     });
 
-    document.getElementById('toggle-zone-edit-mode')?.addEventListener('change', (e) => {
-      const on = e.target.checked;
-      if (on && roomMarkupMode) {
-        const rm = document.getElementById('toggle-room-markup-mode');
-        if (rm) rm.checked = false;
-        roomMarkupMode = false;
-        if (pathDrawingMode) cancelPathDrawing();
-        refreshRoomMarkupUi();
+    document.getElementById('toggle-campus-zone-edit')?.addEventListener('change', (e) => {
+      setCampusZoneEditMode(e.target.checked);
+    });
+    document.getElementById('btn-zone-finish-polygon')?.addEventListener('click', () => {
+      if (!finishZonePolygonDraft()) {
+        appendInfo('Нужно минимум <strong>3</strong> вершины, затем «Замкнуть полигон».', false);
       }
-      setCampusZoneEditMode(on);
-      appendInfo(
-        on
-          ? 'Режим зон: кисть по клеткам (зажмите ЛКМ и ведите). Вид сверху удобнее. Вращение камеры отключено.'
-          : 'Режим зон выключен.',
-        false
-      );
     });
-    document.getElementById('zone-draw-tool')?.addEventListener('change', () => syncZoneDrawToolFromUi());
-    document.getElementById('zone-brush-size')?.addEventListener('change', () => syncZoneDrawToolFromUi());
-    document.getElementById('toggle-zone-grid')?.addEventListener('change', () => syncZoneDrawToolFromUi());
-    document.getElementById('btn-zone-clear-cells')?.addEventListener('click', () => {
-      if (!zonePaintCells.size) return;
-      if (!confirm('Удалить все закрашенные клетки зелени?')) return;
-      zonePaintCells.clear();
-      saveCampusZonesToStorage();
-      refreshCampusZoneVisuals();
-      appendInfo('Зелёные клетки очищены.', false);
+    document.getElementById('btn-zone-undo-vertex')?.addEventListener('click', () => {
+      undoZonePolygonVertex();
     });
-    document.getElementById('btn-zone-finish')?.addEventListener('click', () => finishZoneDrawing());
-    document.getElementById('btn-zone-undo')?.addEventListener('click', () => {
-      if (!zoneDrawBuffer.length) return;
-      zoneDrawBuffer.pop();
+    document.getElementById('btn-zone-cancel-draft')?.addEventListener('click', () => {
+      cancelZonePolygonDraft();
+    });
+    document.getElementById('btn-zone-delete-selected')?.addEventListener('click', () => {
+      if (selectedCampusZoneId == null) {
+        appendInfo('Выберите зону в списке.', false);
+        return;
+      }
+      if (!confirm('Удалить выбранную зону?')) return;
+      deleteCampusZone(selectedCampusZoneId);
+    });
+    document.getElementById('zone-list-select')?.addEventListener('change', (e) => {
+      const id = e.target.value ? Number(e.target.value) : null;
+      selectedCampusZoneId = Number.isFinite(id) ? id : null;
+      const zone = selectedCampusZoneId != null ? campusZoneById(selectedCampusZoneId) : null;
+      if (zone) {
+        const kindSel = document.getElementById('zone-edit-kind');
+        if (kindSel) kindSel.value = zone.kind;
+        const nameInp = document.getElementById('zone-edit-name');
+        if (nameInp) nameInp.value = zone.name || '';
+      }
       refreshCampusZonePreview();
       refreshCampusZoneEditorUi();
     });
-    document.getElementById('btn-zone-cancel-draw')?.addEventListener('click', () => {
-      zoneDrawBuffer = [];
-      refreshCampusZonePreview();
-      refreshCampusZoneEditorUi();
-    });
-    document.getElementById('zone-edit-select')?.addEventListener('change', (e) => {
-      selectedCampusZoneId = e.target.value || null;
-      zoneDrawBuffer = [];
-      refreshCampusZoneVisuals();
-      refreshCampusZoneEditorUi();
-    });
-    document.getElementById('btn-zone-save')?.addEventListener('click', () => {
-      const z = selectedCampusZone();
-      if (!z) {
-        appendInfo('Выберите зону в списке.', true);
-        return;
-      }
-      const label = document.getElementById('zone-edit-label')?.value?.trim();
-      const kind = document.getElementById('zone-polygon-kind')?.value;
-      if (!label) {
-        appendInfo('Название зоны не может быть пустым.', true);
-        return;
-      }
-      z.label = label;
-      z.kind = CAMPUS_ZONE_KINDS.includes(kind) ? kind : 'lawn';
+    document.getElementById('btn-zone-clear-all')?.addEventListener('click', () => {
+      if (!campusZonePolygons.length && !zonePolygonDraft) return;
+      if (!confirm('Удалить все зелёные зоны?')) return;
+      campusZonePolygons.length = 0;
+      zonePolygonDraft = null;
+      selectedCampusZoneId = null;
       saveCampusZonesToStorage();
-      refreshCampusZoneVisuals();
+      refreshCampusZoneMergedVisuals();
       refreshCampusZoneEditorUi();
-      appendInfo(`Контур «${z.label}» сохранён.`, false);
-    });
-    document.getElementById('btn-zone-delete')?.addEventListener('click', () => {
-      const z = selectedCampusZone();
-      if (!z) return;
-      const idx = campusZones.findIndex((x) => x.id === z.id);
-      if (idx >= 0) campusZones.splice(idx, 1);
-      selectedCampusZoneId = campusZones[0]?.id || null;
-      saveCampusZonesToStorage();
-      refreshCampusZoneVisuals();
-      refreshCampusZoneEditorUi();
-      appendInfo('Зона удалена.', false);
-    });
-    document.getElementById('btn-zone-export')?.addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(campusZonesPayload(), null, 2)], {
-        type: 'application/json'
-      });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'campus-zones.json';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    });
-    document.getElementById('btn-zone-export-backup')?.addEventListener('click', () => {
-      const blob = new Blob([JSON.stringify(campusZonesPayload(), null, 2)], {
-        type: 'application/json'
-      });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'campus-zones-backup.json';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    });
-    document.getElementById('btn-zone-import')?.addEventListener('click', () => {
-      const inp = document.createElement('input');
-      inp.type = 'file';
-      inp.accept = 'application/json,.json';
-      inp.onchange = () => {
-        const f = inp.files?.[0];
-        if (!f) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            const parsed = JSON.parse(String(reader.result || ''));
-            applyCampusZonesPayload(parsed);
-            selectedCampusZoneId = campusZones[0]?.id || null;
-            saveCampusZonesToStorage();
-            refreshCampusZoneVisuals();
-            refreshCampusZoneEditorUi();
-            appendInfo(
-              `Импорт: клеток ${zonePaintCells.size}, контуров ${campusZones.length}.`,
-              false
-            );
-          } catch (err) {
-            appendInfo('Не удалось импортировать JSON зон.', true);
-          }
-        };
-        reader.readAsText(f);
-      };
-      inp.click();
     });
 
     document.getElementById('toggle-room-markup-mode').addEventListener('change', (e) => {
       roomMarkupMode = e.target.checked;
-      if (roomMarkupMode) {
-        const zt = document.getElementById('toggle-zone-edit-mode');
-        if (zt?.checked) {
-          zt.checked = false;
-          setCampusZoneEditMode(false);
-        }
+      if (roomMarkupMode && campusZoneEditMode) {
+        setCampusZoneEditMode(false);
+        const zt = document.getElementById('toggle-campus-zone-edit');
+        if (zt) zt.checked = false;
       }
       // Блокируем rotate/pan, чтобы клик по плану не «уезжал» с орбитой камеры. Zoom (колесо) оставляем.
       if (controls) {
@@ -6890,16 +6580,11 @@
       buildingMeshes,
       contextBuildingMeshes,
       districtMapObject,
-      campusZones,
-      zonePaintCells,
-      campusZonesPayload,
       MODEL_CONFIG,
       transformControls,
       saveBuildingLayoutToStorage,
       clearPersistedBuildingLayout,
-      applyPersistedBuildingLayout,
-      refreshCampusZoneVisuals,
-      applyMapVisualStyle
+      applyPersistedBuildingLayout
     };
   </script>
 </body>
