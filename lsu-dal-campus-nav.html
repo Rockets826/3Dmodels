@@ -1199,9 +1199,12 @@
       BUILDING_DOUBLE_SIDE_ALL: true,
       /** Тени: меньше полос и «шума» на крупных фасадах */
       DIRECTIONAL_SHADOW_MAP_SIZE: 4096,
-      DIRECTIONAL_SHADOW_BIAS: -0.00025,
-      DIRECTIONAL_SHADOW_NORMAL_BIAS: 0.07,
-      DIRECTIONAL_SHADOW_RADIUS: 3.2,
+      DIRECTIONAL_SHADOW_BIAS: -0.00022,
+      DIRECTIONAL_SHADOW_NORMAL_BIAS: 0.045,
+      /** 0–1: размытие только при SHADOW_MAP_SOFT; меньше — резче край */
+      DIRECTIONAL_SHADOW_RADIUS: 1.4,
+      /** false — PCF (жёстче), true — PCFSoft (мягче) */
+      SHADOW_MAP_SOFT: true,
       /** Половина стороны орто-камеры теней (м); 0 — авто по охвату корпусов */
       SHADOW_CAMERA_HALF_EXTENT: 0,
       /** Центр теней следует за точкой орбиты камеры */
@@ -1209,11 +1212,44 @@
       ENABLE_BUILDING_SHADOWS: true,
       /** Мягкий ACES-тонмаппинг (только рендер, не трогает CSS-подписи) */
       ENABLE_TONE_MAPPING: true,
-      TONE_MAPPING_EXPOSURE: 1.1,
-      HEMISPHERE_LIGHT_INTENSITY: 0.62,
-      SUN_LIGHT_INTENSITY: 0.78,
-      FILL_LIGHT_INTENSITY: 0.38,
-      AMBIENT_LIGHT_INTENSITY: 0.28,
+      TONE_MAPPING_EXPOSURE: 1.08,
+      /** Контраст граней корпусов: солнце главное, слабый fill/ambient */
+      HEMISPHERE_LIGHT_INTENSITY: 0.42,
+      SUN_LIGHT_INTENSITY: 1.55,
+      FILL_LIGHT_INTENSITY: 0.1,
+      AMBIENT_LIGHT_INTENSITY: 0.1,
+      /** GLB макета часто MeshBasic — без граней; Lambert + flatShading как на схеме */
+      BUILDING_UPGRADE_BASIC_MATERIALS: true,
+      BUILDING_USE_FLAT_SHADING: true,
+      /** Не подсвечивать emissive — иначе «плоское» синее пятно */
+      BUILDING_FACE_SHADING: true,
+      /** Тени только на пол (оверлей); фасады — за счёт N·L, не shadow map */
+      BUILDING_MESH_RECEIVE_SHADOW: false,
+      /**
+       * На белой земле Lambert-тени почти не видны — отдельный слой ShadowMaterial
+       * рисует только затенение (как на схемах кампуса).
+       */
+      GROUND_SHADOW_OVERLAY: true,
+      GROUND_SHADOW_OPACITY: 0.44,
+      GROUND_SHADOW_COLOR: 0x2a3548,
+      /**
+       * Солнце как на схеме: «полукруг» слева-сверху (за кластером 4к/5к/синий),
+       * параллельные лучи по диагонали вправо-вниз (+X +Z).
+       */
+      SUN_ANCHOR_BUILDING_IDS: ['korpus-04', 'korpus-05', 'korpus-siniy-1a'],
+      /** Направление лучей по земле (нормализуется по XZ) */
+      SUN_BEAM_DIRECTION_XZ: { x: 1, z: 1 },
+      /** Насколько далеко «за» якорем стоит источник (против лучей) */
+      SUN_BEHIND_ANCHOR_DISTANCE: 88,
+      /** Высота источника над якорем */
+      SUN_HEIGHT_ABOVE_ANCHOR: 128,
+      /** Куда смотрит солнце — впереди по лучам (для параллельных теней) */
+      SUN_TARGET_AHEAD_DISTANCE: 140,
+      /** Пока корпуса не загрузились: позиция и цель от центра орбиты */
+      SUN_FALLBACK_POSITION: { x: -120, y: 150, z: -95 },
+      SUN_FALLBACK_TARGET: { x: 95, y: 6, z: 85 },
+      /** Мягкая подсветка со стороны камеры — только снимает жёсткие тени, не перебивает солнце */
+      FILL_OFFSET: { x: 62, y: 54, z: 88 },
 
       /** Кнопки ↺ ↻ и слайдер: шаг поворота вокруг Y (градусы) */
       PLACEMENT_MODEL_ROTATE_STEP_DEG: 5,
@@ -1501,7 +1537,47 @@
       if (!mesh?.isMesh) return;
       const on = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
       mesh.castShadow = on;
-      mesh.receiveShadow = on;
+      mesh.receiveShadow =
+        on && MODEL_CONFIG.BUILDING_MESH_RECEIVE_SHADOW === true;
+    }
+
+    /** Корпуса из макета: Basic → Lambert, без emissive, читаемые грани */
+    function upgradeBuildingMaterialsForLighting(mesh) {
+      if (MODEL_CONFIG.BUILDING_FACE_SHADING === false) return;
+      if (!mesh?.isMesh || !mesh.material) return;
+      const flat = MODEL_CONFIG.BUILDING_USE_FLAT_SHADING === true;
+      const upgradeBasic = MODEL_CONFIG.BUILDING_UPGRADE_BASIC_MATERIALS !== false;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const out = mats.map((m) => {
+        if (!m) return m;
+        let mat = m;
+        if (m.isMeshBasicMaterial && upgradeBasic) {
+          mat = new THREE.MeshLambertMaterial({
+            color: m.color ? m.color.clone() : new THREE.Color(0x7a8fa0),
+            transparent: m.transparent,
+            opacity: m.opacity,
+            alphaTest: m.alphaTest,
+            map: m.map,
+            side: m.side,
+            depthWrite: m.depthWrite,
+            flatShading: flat
+          });
+        } else if (m.isMeshLambertMaterial || m.isMeshStandardMaterial) {
+          if (flat && 'flatShading' in m) m.flatShading = true;
+          if (m.isMeshStandardMaterial) {
+            if ('metalness' in m) m.metalness = Math.min(m.metalness ?? 0, 0.06);
+            if ('roughness' in m) m.roughness = Math.max(m.roughness ?? 0.5, 0.88);
+          }
+          mat = m;
+        }
+        if (mat.emissive) {
+          mat.emissive.setHex(0x000000);
+          mat.emissiveIntensity = 0;
+        }
+        mat.needsUpdate = true;
+        return mat;
+      });
+      mesh.material = Array.isArray(mesh.material) ? out : out[0];
     }
 
     /** DoubleSide для проблемных GLB; shadowSide — чтобы тени не ломались на двусторонних мешах */
@@ -1585,12 +1661,20 @@
         if ('envMapIntensity' in m && m.envMapIntensity !== undefined && m.envMapIntensity < 0.2) {
           m.envMapIntensity = Math.max(0.35, m.envMapIntensity);
         }
-        if (m.emissive && 'emissiveIntensity' in m && m.color) {
+        if (
+          MODEL_CONFIG.BUILDING_FACE_SHADING !== true &&
+          m.emissive &&
+          'emissiveIntensity' in m &&
+          m.color
+        ) {
           if (m.emissiveIntensity === undefined) m.emissiveIntensity = 0;
           if (m.emissiveIntensity < 0.06) {
             m.emissive.copy(m.color);
             m.emissiveIntensity = 0.05;
           }
+        } else if (m.emissive) {
+          m.emissive.setHex(0x000000);
+          m.emissiveIntensity = 0;
         }
         m.needsUpdate = true;
       });
@@ -1800,6 +1884,8 @@
     let districtMapBaseMinY = 0;
     /** Подложка под макетом (белый лист, ниже по Y) */
     let mapGroundUnderlay = null;
+    let groundShadowOverlay = null;
+    let mapGroundShadowOverlay = null;
 
     function clampDistrictUiScale(v) {
       const mn = Number(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE_MIN) || 0.6;
@@ -1940,8 +2026,10 @@
       applyDistrictMapUiScale(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE ?? 1);
       if (MODEL_CONFIG.HIDE_DEFAULT_GROUND_WITH_MAP === true) {
         ground.visible = false;
+        if (groundShadowOverlay) groundShadowOverlay.visible = false;
         if (MODEL_CONFIG.DISTRICT_MAP_SHOW_UNDERLAY !== false && mapGroundUnderlay) {
           mapGroundUnderlay.visible = true;
+          if (mapGroundShadowOverlay) mapGroundShadowOverlay.visible = true;
         }
       }
       syncMapOverlayLayerOrder();
@@ -1978,7 +2066,8 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type =
+      MODEL_CONFIG.SHADOW_MAP_SOFT === true ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     if (MODEL_CONFIG.ENABLE_TONE_MAPPING !== false) {
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -2249,31 +2338,112 @@
       if (currentFloorBuildingId === bid) void updateFloorPlan();
     }
 
+    // --- Building registry (раньше света: якорь солнца на 4к/5к) ---
+    const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
+
     // --- Lights & environment ---
     const hemi = new THREE.HemisphereLight(
       0xffffff,
       0xe8ecef,
-      Number(MODEL_CONFIG.HEMISPHERE_LIGHT_INTENSITY) || 0.62
+      Number(MODEL_CONFIG.HEMISPHERE_LIGHT_INTENSITY) || 0.42
     );
     scene.add(hemi);
 
-    const amb = new THREE.AmbientLight(0xe8eef4, Number(MODEL_CONFIG.AMBIENT_LIGHT_INTENSITY) || 0.2);
+    const amb = new THREE.AmbientLight(
+      0xe8eef4,
+      Number(MODEL_CONFIG.AMBIENT_LIGHT_INTENSITY) || 0.1
+    );
     scene.add(amb);
+
+    const _sunAnchorPos = new THREE.Vector3();
+    const _sunAnchorScratch = new THREE.Vector3();
+    const _sunPos = new THREE.Vector3();
+    const _sunTarget = new THREE.Vector3();
+    const _sunBeamDir = new THREE.Vector3();
+
+    function sunBeamDirectionXZ(out) {
+      const d = MODEL_CONFIG.SUN_BEAM_DIRECTION_XZ || { x: 1, z: 1 };
+      out.set(Number(d.x) || 1, 0, Number(d.z) || 1);
+      if (out.lengthSq() < 1e-6) out.set(1, 0, 1);
+      out.normalize();
+      return out;
+    }
+
+    function fillOffsetVector() {
+      const o = MODEL_CONFIG.FILL_OFFSET || { x: 62, y: 54, z: 88 };
+      return new THREE.Vector3(Number(o.x) || 0, Number(o.y) || 40, Number(o.z) || 0);
+    }
+
+    function sunAnchorFromBuildings(out) {
+      const ids = MODEL_CONFIG.SUN_ANCHOR_BUILDING_IDS || [
+        'korpus-04',
+        'korpus-05',
+        'korpus-siniy-1a'
+      ];
+      out.set(0, 0, 0);
+      let n = 0;
+      for (const id of ids) {
+        const root = buildingMeshes.get(id);
+        if (!root) continue;
+        root.getWorldPosition(_sunAnchorScratch);
+        out.add(_sunAnchorScratch);
+        n++;
+      }
+      if (n === 0) return null;
+      out.divideScalar(n);
+      return out;
+    }
+
+    /** Позиция и цель солнца: источник «за» якорем, лучи вдоль SUN_BEAM_DIRECTION_XZ */
+    function applySunLightPose(posOut, targetOut) {
+      const beam = sunBeamDirectionXZ(_sunBeamDir);
+      const behind = Number(MODEL_CONFIG.SUN_BEHIND_ANCHOR_DISTANCE) || 88;
+      const height = Number(MODEL_CONFIG.SUN_HEIGHT_ABOVE_ANCHOR) || 128;
+      const ahead = Number(MODEL_CONFIG.SUN_TARGET_AHEAD_DISTANCE) || 140;
+      const anchor = sunAnchorFromBuildings(_sunAnchorPos);
+      if (anchor) {
+        posOut.set(
+          anchor.x - beam.x * behind,
+          anchor.y + height,
+          anchor.z - beam.z * behind
+        );
+        targetOut.set(
+          anchor.x + beam.x * ahead,
+          Math.max(2, anchor.y + 6),
+          anchor.z + beam.z * ahead
+        );
+        return true;
+      }
+      const fp = MODEL_CONFIG.SUN_FALLBACK_POSITION || { x: -120, y: 150, z: -95 };
+      const ft = MODEL_CONFIG.SUN_FALLBACK_TARGET || { x: 95, y: 6, z: 85 };
+      const t = controls.target;
+      posOut.set(
+        t.x + (Number(fp.x) || 0),
+        Number(fp.y) || 150,
+        t.z + (Number(fp.z) || 0)
+      );
+      targetOut.set(
+        t.x + (Number(ft.x) || 0),
+        Number(ft.y) || 6,
+        t.z + (Number(ft.z) || 0)
+      );
+      return false;
+    }
 
     const dir = new THREE.DirectionalLight(
       0xffffff,
-      Number(MODEL_CONFIG.SUN_LIGHT_INTENSITY) || 0.78
+      Number(MODEL_CONFIG.SUN_LIGHT_INTENSITY) || 1.55
     );
-    const sunOffset = new THREE.Vector3(72, 118, 48);
-    dir.position.copy(controls.target).add(sunOffset);
-    dir.target.position.copy(controls.target);
+    applySunLightPose(_sunPos, _sunTarget);
+    dir.position.copy(_sunPos);
+    dir.target.position.copy(_sunTarget);
     scene.add(dir.target);
     dir.castShadow = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
     const sm = MODEL_CONFIG.DIRECTIONAL_SHADOW_MAP_SIZE || 2048;
     dir.shadow.mapSize.set(sm, sm);
-    dir.shadow.bias = MODEL_CONFIG.DIRECTIONAL_SHADOW_BIAS ?? -0.00025;
-    dir.shadow.normalBias = MODEL_CONFIG.DIRECTIONAL_SHADOW_NORMAL_BIAS ?? 0.07;
-    dir.shadow.radius = Number(MODEL_CONFIG.DIRECTIONAL_SHADOW_RADIUS) || 2.5;
+    dir.shadow.bias = MODEL_CONFIG.DIRECTIONAL_SHADOW_BIAS ?? -0.00022;
+    dir.shadow.normalBias = MODEL_CONFIG.DIRECTIONAL_SHADOW_NORMAL_BIAS ?? 0.045;
+    dir.shadow.radius = Number(MODEL_CONFIG.DIRECTIONAL_SHADOW_RADIUS) || 1.4;
     dir.shadow.camera.near = 12;
     dir.shadow.camera.far = 560;
     const shHalf0 = 160;
@@ -2285,11 +2455,12 @@
     scene.add(dir);
 
     const fillDir = new THREE.DirectionalLight(
-      0xc8dcf0,
-      Number(MODEL_CONFIG.FILL_LIGHT_INTENSITY) || 0.34
+      0xf4f7fb,
+      Number(MODEL_CONFIG.FILL_LIGHT_INTENSITY) || 0.1
     );
-    fillDir.position.set(-55, 42, -70);
-    fillDir.target.position.set(0, 0, 0);
+    const fillOffset = fillOffsetVector();
+    fillDir.position.copy(controls.target).add(fillOffset);
+    fillDir.target.position.copy(controls.target);
     scene.add(fillDir.target);
     scene.add(fillDir);
 
@@ -2301,10 +2472,12 @@
     }
 
     function updateSceneLighting() {
-      const target = controls.target;
-      dir.target.position.copy(target);
-      dir.position.copy(target).add(sunOffset);
-      fillDir.target.position.copy(target);
+      const orbit = controls.target;
+      applySunLightPose(_sunPos, _sunTarget);
+      dir.position.copy(_sunPos);
+      dir.target.position.copy(_sunTarget);
+      fillDir.target.position.copy(orbit);
+      fillDir.position.copy(orbit).add(fillOffset);
       if (!dir.castShadow || MODEL_CONFIG.SHADOW_FOLLOW_CAMERA_TARGET === false) return;
       const half = shadowCameraHalfExtent();
       const shCam = dir.shadow.camera;
@@ -2315,23 +2488,47 @@
       shCam.updateProjectionMatrix();
     }
 
+    function addGroundShadowOverlay(geometry, y, renderOrder) {
+      if (MODEL_CONFIG.ENABLE_BUILDING_SHADOWS === false) return null;
+      if (MODEL_CONFIG.GROUND_SHADOW_OVERLAY === false) return null;
+      const opacity = Number(MODEL_CONFIG.GROUND_SHADOW_OPACITY) || 0.44;
+      const color = MODEL_CONFIG.GROUND_SHADOW_COLOR ?? 0x2a3548;
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.ShadowMaterial({
+          color,
+          opacity,
+          transparent: true,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1
+        })
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.y = y;
+      mesh.receiveShadow = true;
+      mesh.renderOrder = renderOrder ?? 1;
+      scene.add(mesh);
+      return mesh;
+    }
+
     const groundExt = Number(MODEL_CONFIG.GROUND_PLANE_EXTENT) || 5200;
     const groundColor = MODEL_CONFIG.GROUND_COLOR ?? 0xffffff;
     const groundGeo = new THREE.PlaneGeometry(groundExt, groundExt);
-    const groundMat = new THREE.MeshLambertMaterial({
-      color: groundColor
-    });
+    const groundMat = new THREE.MeshBasicMaterial({ color: groundColor });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.02;
-    ground.receiveShadow = true;
+    ground.receiveShadow = false;
     scene.add(ground);
+    groundShadowOverlay = addGroundShadowOverlay(groundGeo, -0.008, 1);
 
     const underlayCol = MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_COLOR ?? 0xffffff;
     const underlayOp = Math.min(1, Math.max(0.15, Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_OPACITY) || 1));
     const underlayExt = Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_EXTENT) || 9200;
     const underlayGeo = new THREE.PlaneGeometry(underlayExt, underlayExt);
-    const underlayMat = new THREE.MeshLambertMaterial({
+    const underlayMat = new THREE.MeshBasicMaterial({
       color: underlayCol,
       transparent: underlayOp < 0.999,
       opacity: underlayOp,
@@ -2344,13 +2541,16 @@
     mapGroundUnderlay.rotation.x = -Math.PI / 2;
     const underlayY = Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_Y);
     mapGroundUnderlay.position.y = Number.isFinite(underlayY) ? underlayY : -0.12;
-    mapGroundUnderlay.receiveShadow = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
+    mapGroundUnderlay.receiveShadow = false;
     mapGroundUnderlay.renderOrder = -2;
     mapGroundUnderlay.visible = false;
     scene.add(mapGroundUnderlay);
-
-    // --- Building registry ---
-    const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
+    mapGroundShadowOverlay = addGroundShadowOverlay(
+      underlayGeo,
+      (Number.isFinite(underlayY) ? underlayY : -0.12) + 0.01,
+      0
+    );
+    if (mapGroundShadowOverlay) mapGroundShadowOverlay.visible = false;
 
     let layoutSaveTimer = null;
 
@@ -5299,6 +5499,7 @@
                   applyCampusMeshShadowFlags(o);
                   fixBuildingMaterialsForMesh(o, b.id);
                   fixTooDarkMaterialsForMesh(o, b.id);
+                  upgradeBuildingMaterialsForLighting(o);
                 }
                 o.userData.buildingId = b.id;
               });
@@ -5325,6 +5526,7 @@
                 applyCampusMeshShadowFlags(o);
                 fixBuildingMaterialsForMesh(o, b.id);
                 fixTooDarkMaterialsForMesh(o, b.id);
+                upgradeBuildingMaterialsForLighting(o);
               }
               o.userData.buildingId = b.id;
             });
