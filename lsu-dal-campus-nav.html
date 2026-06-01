@@ -505,7 +505,8 @@
         <button type="button" class="ghost building-color-preset" data-color="#9eb4c8" title="По умолчанию (серо-голубой)">Стандарт</button>
         <button type="button" class="ghost building-color-preset" data-color="#e8dcc8" title="Светлый фасад">Светлый</button>
         <button type="button" class="ghost building-color-preset" data-color="#c4b8a8" title="Бежевый">Беж</button>
-        <button type="button" class="ghost building-color-preset" data-color="#a8c4e0" title="Голубой">Голубой</button>
+        <button type="button" class="ghost building-color-preset" data-color="#3d8fd4" title="Яркий голубой (как на схеме)">Синий</button>
+        <button type="button" class="ghost building-color-preset" data-color="#a8c4e0" title="Светло-голубой">Голубой</button>
         <button type="button" class="ghost building-color-preset" data-color="#b5d4b8" title="Зелёный">Зелёный</button>
         <button type="button" class="ghost building-color-preset" data-color="#d4a89a" title="Терракота">Терракота</button>
       </div>
@@ -1277,10 +1278,16 @@
       /** Радиус (м), в котором клик замыкает контур на первой вершине. */
       CAMPUS_ZONE_CLOSE_VERTEX_RADIUS: 4,
       CAMPUS_ZONE_SURFACE_Y: 0.045,
+      /** Уровень «земли» для подошвы корпусов (м) */
+      BUILDING_GROUND_Y: 0,
       /** Пользовательские цвета корпусов (id → #rrggbb) в localStorage. */
       BUILDING_COLORS_STORAGE_KEY: 'lsu-dal-campus-nav-building-colors-v1',
-      /** 0 = только исходный GLB, 1 = полностью выбранный цвет. */
-      BUILDING_COLOR_TINT_STRENGTH: 0.62,
+      /** 1 = ровно выбранный цвет; меньше — смешивание с серым GLB (тускло). */
+      BUILDING_COLOR_TINT_STRENGTH: 1,
+      /** Сохранять светлее/темнее грани от исходного меша */
+      BUILDING_COLOR_PRESERVE_FACET_LIGHTNESS: true,
+      /** Чуть насыщеннее выбранный hex (1 = без изменений) */
+      BUILDING_COLOR_SATURATION_BOOST: 1.12,
       /** Размер значка входа / выхода / лестницы на плане этажа (усл. метры). */
       MARKER_ICON_WORLD_SCALE: 0.62,
       /** Подлет камеры к корпусу при выборе в списке / клике по модели */
@@ -1292,6 +1299,7 @@
       /** Подложка в стиле схемы кампуса: чистый белый, без текстуры и сетки */
       GROUND_COLOR: 0xffffff,
       SCENE_SKY_COLOR: 0xf0f4f8,
+      ENABLE_SCENE_FOG: false,
       SCENE_FOG_DENSITY: 0.00112,
       /** Подложка под макет — шире охват при виде сверху с большой высоты */
       DISTRICT_MAP_UNDERLAY_EXTENT: 9200,
@@ -1359,11 +1367,14 @@
        */
       DISTRICT_MAP_APPLY_DARK_PBR_FIX: false,
       /** 0…1 — насколько подтянуть цвет поверхностей к DISTRICT_MAP_TINT_COLOR (меньше = больше контраста в GLB). */
-      DISTRICT_MAP_TINT_BLEND: 0.28,
-      /** Светло-серый с лёгким холодом, как типичные фасады после подсветки в сцене */
-      DISTRICT_MAP_TINT_COLOR: 0xb8c2cc,
-      /** Тёмные линии плана (улицы); ниже порога яркости см. DISTRICT_MAP_LINE_LUMINANCE_MAX */
-      DISTRICT_MAP_LINE_TINT_COLOR: 0x4a5562,
+      DISTRICT_MAP_TINT_BLEND: 0.36,
+      /** Светлый «бетон» макета на белой подложке */
+      DISTRICT_MAP_TINT_COLOR: 0xdce4ec,
+      /** Поднять яркость кварталов после тонирования (дороги не трогаем) */
+      DISTRICT_MAP_SURFACE_LIGHTNESS_LIFT: 0.1,
+      DISTRICT_MAP_SURFACE_LIGHTNESS_MIN: 0.56,
+      /** Линии плана (улицы) — чуть светлее, но темнее кварталов */
+      DISTRICT_MAP_LINE_TINT_COLOR: 0x6e7d8c,
       /** Выше — «тело» кварталов, ниже или равно — дороги/контуры (остаются тёмнее). */
       DISTRICT_MAP_LINE_LUMINANCE_MAX: 0.38
     };
@@ -1609,6 +1620,12 @@
         0.55,
         Math.max(0.08, Number(MODEL_CONFIG.DISTRICT_MAP_LINE_LUMINANCE_MAX) || 0.38)
       );
+      const surfLift = Number(MODEL_CONFIG.DISTRICT_MAP_SURFACE_LIGHTNESS_LIFT) || 0;
+      const surfMin = THREE.MathUtils.clamp(
+        Number(MODEL_CONFIG.DISTRICT_MAP_SURFACE_LIGHTNESS_MIN) || 0.56,
+        0.4,
+        0.82
+      );
       root.traverse((o) => {
         if (!o.isMesh || !o.material) return;
         fixBuildingMaterialsForMesh(o, did);
@@ -1624,9 +1641,13 @@
             m.color.copy(lineCol);
           } else {
             m.color.lerp(tintCol, blend);
+            m.color.getHSL(hsl);
+            let nl = hsl.l + surfLift;
+            if (nl < surfMin) nl = surfMin;
+            m.color.setHSL(hsl.h, THREE.MathUtils.clamp(hsl.s * 0.88, 0, 0.42), THREE.MathUtils.clamp(nl, 0, 0.8));
           }
           if ('roughness' in m && m.roughness !== undefined) {
-            m.roughness = Math.max(0.8, m.roughness);
+            m.roughness = Math.max(0.72, m.roughness);
           }
           if ('metalness' in m && m.metalness !== undefined) {
             m.metalness = THREE.MathUtils.clamp(m.metalness * 0.35, 0, 0.18);
@@ -1832,6 +1853,22 @@
         building.position.x = root.position.x;
         building.position.z = root.position.z;
       }
+    }
+
+    /** Опускает/поднимает корпус так, чтобы низ bbox касался BUILDING_GROUND_Y */
+    function snapBuildingRootFootToGround(root) {
+      if (!root) return;
+      const groundY = Number(MODEL_CONFIG.BUILDING_GROUND_Y) || 0;
+      root.updateMatrixWorld(true);
+      const box = new THREE.Box3();
+      if (!expandWorldBoxFromMeshes(root, box) || box.isEmpty()) {
+        box.setFromObject(root, true);
+      }
+      if (box.isEmpty()) return;
+      const delta = groundY - box.min.y;
+      if (Math.abs(delta) < 1e-4) return;
+      root.position.y += delta;
+      root.updateMatrixWorld(true);
     }
 
     /**
@@ -2040,7 +2077,12 @@
     const SKY_COLOR = MODEL_CONFIG.SCENE_SKY_COLOR ?? 0xf0f4f8;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(SKY_COLOR);
-    scene.fog = new THREE.FogExp2(SKY_COLOR, Number(MODEL_CONFIG.SCENE_FOG_DENSITY) || 0.00112);
+    if (MODEL_CONFIG.ENABLE_SCENE_FOG === true) {
+      scene.fog = new THREE.FogExp2(
+        SKY_COLOR,
+        Number(MODEL_CONFIG.SCENE_FOG_DENSITY) || 0.00112
+      );
+    }
 
     const perspCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 4000);
     perspCamera.position.set(160, 120, 200);
@@ -2735,6 +2777,41 @@
       });
     }
 
+    function applyBuildingColorToMeshMaterial(mat, origMat, tint, strength) {
+      if (!mat || !origMat?.color || !tint) return;
+      const preserve = MODEL_CONFIG.BUILDING_COLOR_PRESERVE_FACET_LIGHTNESS !== false;
+      const satBoost = Number(MODEL_CONFIG.BUILDING_COLOR_SATURATION_BOOST) || 1;
+      const oHsl = { h: 0, s: 0, l: 0 };
+      const tHsl = { h: 0, s: 0, l: 0 };
+      origMat.color.getHSL(oHsl);
+      tint.getHSL(tHsl);
+      if (strength >= 0.999) {
+        if (preserve) {
+          const facet = THREE.MathUtils.clamp(0.48 + oHsl.l * 0.95, 0.32, 1.02);
+          mat.color.setHSL(
+            tHsl.h,
+            THREE.MathUtils.clamp(tHsl.s * satBoost, 0, 1),
+            THREE.MathUtils.clamp(tHsl.l * facet, 0.22, 0.96)
+          );
+        } else {
+          mat.color.copy(tint);
+          if (satBoost !== 1) {
+            mat.color.getHSL(tHsl);
+            mat.color.setHSL(tHsl.h, THREE.MathUtils.clamp(tHsl.s * satBoost, 0, 1), tHsl.l);
+          }
+        }
+      } else {
+        mat.color.copy(origMat.color).lerp(tint, strength);
+        mat.color.getHSL(tHsl);
+        mat.color.setHSL(tHsl.h, THREE.MathUtils.clamp(tHsl.s * satBoost, 0, 1), tHsl.l);
+      }
+      if (mat.emissive) {
+        mat.emissive.setHex(0x000000);
+        mat.emissiveIntensity = 0;
+      }
+      mat.needsUpdate = true;
+    }
+
     function applyBuildingColorToRoot(root, bid) {
       if (!root) return;
       const hex = getBuildingColorOverride(bid);
@@ -2748,14 +2825,7 @@
         const orig = originalMaterials.get(o);
         if (!orig) return;
         mats.forEach((m, i) => {
-          const oM = orig[i];
-          if (!m || !oM || !oM.color) return;
-          m.color.copy(oM.color).lerp(tint, strength);
-          if (m.emissive) {
-            m.emissive.setHex(0x000000);
-            m.emissiveIntensity = 0;
-          }
-          m.needsUpdate = true;
+          applyBuildingColorToMeshMaterial(m, orig[i], tint, strength);
         });
       });
     }
@@ -5553,7 +5623,10 @@
 
         if (root.userData.embeddedFromDistrict) {
           recenterEmbeddedPivotAtFootXZ(root, b);
+          snapBuildingRootFootToGround(root);
           initEmbeddedBuildingEntranceFromBBox(b, root);
+        } else {
+          snapBuildingRootFootToGround(root);
         }
 
         const m0 = Math.max(1e-5, b.buildingSizeMultiplier ?? 1);
