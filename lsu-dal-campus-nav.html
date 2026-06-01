@@ -5688,9 +5688,11 @@
     function populateBuildingSelect() {
       const sel = document.getElementById('select-building');
       sel.innerHTML = '';
+      sel.add(new Option('— выберите корпус —', ''));
       MODEL_CONFIG.buildings.forEach((b) => {
         sel.add(new Option(b.name, b.id));
       });
+      sel.value = '';
       updateFloorSelect();
     }
 
@@ -6267,10 +6269,11 @@
     }
 
     function setSelectedBuilding(bid) {
+      const id = bid || null;
       // Маршрут привязан к конкретной паре точек/этажу/корпусу. При переключении
       // корпуса старая линия теряет смысл и «уезжает» с floorRouteGroup в центр нового
       // корпуса (баг с «висящей в воздухе» зелёной линией) — поэтому очищаем явно.
-      if (selectedBuildingId !== bid) {
+      if (selectedBuildingId !== id) {
         clearRoute();
         // При смене корпуса прерываем редактирование пути — буфер был для другого корпуса.
         if (pathDrawingMode) cancelPathDrawing();
@@ -6278,11 +6281,11 @@
       if (selectedBuildingId && buildingMeshes.has(selectedBuildingId)) {
         highlightBuilding(buildingMeshes.get(selectedBuildingId), false);
       }
-      selectedBuildingId = bid;
-      if (bid && buildingMeshes.has(bid)) {
-        highlightBuilding(buildingMeshes.get(bid), true);
+      selectedBuildingId = id;
+      if (id && buildingMeshes.has(id)) {
+        highlightBuilding(buildingMeshes.get(id), true);
       }
-      showBuildingInfo(bid);
+      if (id) showBuildingInfo(id);
       syncFloorPlanToggleUi();
       applyFloorInteriorLod();
       const pt = document.getElementById('placement-target');
@@ -6421,9 +6424,10 @@
     renderer.domElement.addEventListener('pointerleave', onPointerUp);
 
     document.getElementById('select-building').addEventListener('change', () => {
+      const bid = document.getElementById('select-building').value;
       updateFloorSelect();
-      setSelectedBuilding(document.getElementById('select-building').value);
-      flyToBuilding(document.getElementById('select-building').value);
+      setSelectedBuilding(bid || null);
+      if (bid) flyToBuilding(bid);
       void updateFloorPlan();
       refreshFloorRotationUi();
       refreshFloorShiftUi();
@@ -7026,7 +7030,7 @@
 
     loadMarkerIconTextures();
     await loadCampus();
-    setSelectedBuilding(MODEL_CONFIG.buildings[0]?.id);
+    setSelectedBuilding(null);
     await updateFloorPlan();
     refreshRoomMarkupUi();
     refreshFloorRotationUi();
