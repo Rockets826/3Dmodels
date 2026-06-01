@@ -1201,6 +1201,19 @@
       DIRECTIONAL_SHADOW_MAP_SIZE: 4096,
       DIRECTIONAL_SHADOW_BIAS: -0.00025,
       DIRECTIONAL_SHADOW_NORMAL_BIAS: 0.07,
+      DIRECTIONAL_SHADOW_RADIUS: 3.2,
+      /** Половина стороны орто-камеры теней (м); 0 — авто по охвату корпусов */
+      SHADOW_CAMERA_HALF_EXTENT: 0,
+      /** Центр теней следует за точкой орбиты камеры */
+      SHADOW_FOLLOW_CAMERA_TARGET: true,
+      ENABLE_BUILDING_SHADOWS: true,
+      /** Мягкий ACES-тонмаппинг (только рендер, не трогает CSS-подписи) */
+      ENABLE_TONE_MAPPING: true,
+      TONE_MAPPING_EXPOSURE: 1.1,
+      HEMISPHERE_LIGHT_INTENSITY: 0.62,
+      SUN_LIGHT_INTENSITY: 0.78,
+      FILL_LIGHT_INTENSITY: 0.38,
+      AMBIENT_LIGHT_INTENSITY: 0.28,
 
       /** Кнопки ↺ ↻ и слайдер: шаг поворота вокруг Y (градусы) */
       PLACEMENT_MODEL_ROTATE_STEP_DEG: 5,
@@ -1238,9 +1251,12 @@
       FLY_CAMERA_TO_BUILDING_ON_SELECT: true,
       /** В режиме расстановки (gizmo) не сбрасывать ракурс камеры */
       SKIP_FLY_CAMERA_WHILE_PLACEMENT_MODE: true,
-      /** Размер зелёной плоскости и сетки (усл. ед.); при сильном отдалении мелкая плоскость даёт полосу «неба» внизу кадра */
+      /** Размер белой подложки (усл. ед.); при сильном отдалении мелкая плоскость даёт полосу «неба» внизу кадра */
       GROUND_PLANE_EXTENT: 5200,
-      GRID_EXTENT: 5200,
+      /** Подложка в стиле схемы кампуса: чистый белый, без текстуры и сетки */
+      GROUND_COLOR: 0xffffff,
+      SCENE_SKY_COLOR: 0xf0f4f8,
+      SCENE_FOG_DENSITY: 0.00112,
       /** Подложка под макет — шире охват при виде сверху с большой высоты */
       DISTRICT_MAP_UNDERLAY_EXTENT: 9200,
 
@@ -1285,23 +1301,19 @@
       DISTRICT_MAP_GROUND_ALIGN: true,
       DISTRICT_MAP_CAST_SHADOW: false,
       DISTRICT_MAP_RECEIVE_SHADOW: true,
-      /** Спрятать зелёную плоскость и сетку, если макет успешно загрузился */
+      /** Спрятать основную подложку, если макет успешно загрузился (остаётся белый лист под планом) */
       HIDE_DEFAULT_GROUND_WITH_MAP: true,
-      /**
-       * Под макетом: мягкая плоскость + лёгкая сетка (вместо «пустого» неба под картой).
-       * false — как раньше, только скрытие зелёного пола.
-       */
+      /** Под макетом — тот же белый лист (без сетки) */
       DISTRICT_MAP_SHOW_UNDERLAY: true,
       /**
-       * Подложка и вспомогательная сетка должны быть строго НИЖЕ основания макета (y ≈ 0 после GROUND_ALIGN).
-       * Если поставить их выше нуля — при виде сверху они рисуются поверх дорог (дороги «пропадают») и z-fight.
+       * Подложка строго НИЖЕ основания макета (y ≈ 0 после GROUND_ALIGN).
+       * Выше нуля — z-fight с дорогами на плане.
        */
       DISTRICT_MAP_UNDERLAY_Y: -0.12,
-      DISTRICT_MAP_AUX_GRID_Y: -0.05,
       /** Слегка поднять весь GLB после прижатия к нулю — запас от совпадения с подложкой. */
       DISTRICT_MAP_VERTICAL_LIFT: 0.025,
-      /** Пол под макетом: тёмнее и нейтральнее самого плана, иначе кварталы и дороги не читаются. */
-      DISTRICT_MAP_UNDERLAY_COLOR: 0x3d4652,
+      /** Подложка под планом — тот же белый лист */
+      DISTRICT_MAP_UNDERLAY_COLOR: 0xffffff,
       DISTRICT_MAP_UNDERLAY_OPACITY: 1,
       /** Подогнать цвет макета под «бетон» корпусов (смешивание + те же правки PBR, что у зданий). */
       DISTRICT_MAP_MATCH_BUILDING_TONE: true,
@@ -1483,6 +1495,13 @@
       }
       sceneModel.position.set(px, py, pz);
       return true;
+    }
+
+    function applyCampusMeshShadowFlags(mesh) {
+      if (!mesh?.isMesh) return;
+      const on = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
+      mesh.castShadow = on;
+      mesh.receiveShadow = on;
     }
 
     /** DoubleSide для проблемных GLB; shadowSide — чтобы тени не ломались на двусторонних мешах */
@@ -1779,9 +1798,8 @@
     let districtMapBaseScale = 1;
     let districtMapBasePosition = new THREE.Vector3();
     let districtMapBaseMinY = 0;
-    /** Подложка и сетка под макетом (показываются при успешной загрузке карты) */
+    /** Подложка под макетом (белый лист, ниже по Y) */
     let mapGroundUnderlay = null;
-    let mapGroundGrid = null;
 
     function clampDistrictUiScale(v) {
       const mn = Number(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE_MIN) || 0.6;
@@ -1922,14 +1940,8 @@
       applyDistrictMapUiScale(MODEL_CONFIG.DISTRICT_MAP_UI_SCALE ?? 1);
       if (MODEL_CONFIG.HIDE_DEFAULT_GROUND_WITH_MAP === true) {
         ground.visible = false;
-        grid.visible = false;
-        if (
-          MODEL_CONFIG.DISTRICT_MAP_SHOW_UNDERLAY !== false &&
-          mapGroundUnderlay &&
-          mapGroundGrid
-        ) {
+        if (MODEL_CONFIG.DISTRICT_MAP_SHOW_UNDERLAY !== false && mapGroundUnderlay) {
           mapGroundUnderlay.visible = true;
-          mapGroundGrid.visible = true;
         }
       }
       syncMapOverlayLayerOrder();
@@ -1937,10 +1949,10 @@
     }
 
     // --- Scene ---
-    const SKY_COLOR = 0x87b8e0;
+    const SKY_COLOR = MODEL_CONFIG.SCENE_SKY_COLOR ?? 0xf0f4f8;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(SKY_COLOR);
-    scene.fog = new THREE.FogExp2(SKY_COLOR, 0.002);
+    scene.fog = new THREE.FogExp2(SKY_COLOR, Number(MODEL_CONFIG.SCENE_FOG_DENSITY) || 0.00112);
 
     const perspCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 4000);
     perspCamera.position.set(160, 120, 200);
@@ -1965,8 +1977,13 @@
     renderer.setClearColor(SKY_COLOR, 1);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.enabled = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (MODEL_CONFIG.ENABLE_TONE_MAPPING !== false) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = Number(MODEL_CONFIG.TONE_MAPPING_EXPOSURE) || 1.06;
+    }
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
@@ -2233,52 +2250,88 @@
     }
 
     // --- Lights & environment ---
-    const hemi = new THREE.HemisphereLight(0xdfefff, 0x3d4f5c, 0.55);
+    const hemi = new THREE.HemisphereLight(
+      0xffffff,
+      0xe8ecef,
+      Number(MODEL_CONFIG.HEMISPHERE_LIGHT_INTENSITY) || 0.62
+    );
     scene.add(hemi);
 
-    const dir = new THREE.DirectionalLight(0xfff5e6, 1.05);
-    dir.position.set(80, 120, 40);
-    dir.castShadow = true;
+    const amb = new THREE.AmbientLight(0xe8eef4, Number(MODEL_CONFIG.AMBIENT_LIGHT_INTENSITY) || 0.2);
+    scene.add(amb);
+
+    const dir = new THREE.DirectionalLight(
+      0xffffff,
+      Number(MODEL_CONFIG.SUN_LIGHT_INTENSITY) || 0.78
+    );
+    const sunOffset = new THREE.Vector3(72, 118, 48);
+    dir.position.copy(controls.target).add(sunOffset);
+    dir.target.position.copy(controls.target);
+    scene.add(dir.target);
+    dir.castShadow = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
     const sm = MODEL_CONFIG.DIRECTIONAL_SHADOW_MAP_SIZE || 2048;
     dir.shadow.mapSize.set(sm, sm);
     dir.shadow.bias = MODEL_CONFIG.DIRECTIONAL_SHADOW_BIAS ?? -0.00025;
     dir.shadow.normalBias = MODEL_CONFIG.DIRECTIONAL_SHADOW_NORMAL_BIAS ?? 0.07;
-    dir.shadow.camera.near = 15;
-    dir.shadow.camera.far = 520;
-    dir.shadow.camera.left = -140;
-    dir.shadow.camera.right = 140;
-    dir.shadow.camera.top = 140;
-    dir.shadow.camera.bottom = -140;
+    dir.shadow.radius = Number(MODEL_CONFIG.DIRECTIONAL_SHADOW_RADIUS) || 2.5;
+    dir.shadow.camera.near = 12;
+    dir.shadow.camera.far = 560;
+    const shHalf0 = 160;
+    dir.shadow.camera.left = -shHalf0;
+    dir.shadow.camera.right = shHalf0;
+    dir.shadow.camera.top = shHalf0;
+    dir.shadow.camera.bottom = -shHalf0;
+    dir.shadow.camera.updateProjectionMatrix();
     scene.add(dir);
 
-    const point = new THREE.PointLight(0xffaa66, 0.35, 200);
-    point.position.set(-40, 30, 40);
-    scene.add(point);
+    const fillDir = new THREE.DirectionalLight(
+      0xc8dcf0,
+      Number(MODEL_CONFIG.FILL_LIGHT_INTENSITY) || 0.34
+    );
+    fillDir.position.set(-55, 42, -70);
+    fillDir.target.position.set(0, 0, 0);
+    scene.add(fillDir.target);
+    scene.add(fillDir);
+
+    function shadowCameraHalfExtent() {
+      const fixed = Number(MODEL_CONFIG.SHADOW_CAMERA_HALF_EXTENT);
+      if (Number.isFinite(fixed) && fixed > 0) return fixed;
+      const campus = computeCampusHorizontalMaxXZ();
+      return THREE.MathUtils.clamp(campus * 0.45 + 48, 130, 280);
+    }
+
+    function updateSceneLighting() {
+      const target = controls.target;
+      dir.target.position.copy(target);
+      dir.position.copy(target).add(sunOffset);
+      fillDir.target.position.copy(target);
+      if (!dir.castShadow || MODEL_CONFIG.SHADOW_FOLLOW_CAMERA_TARGET === false) return;
+      const half = shadowCameraHalfExtent();
+      const shCam = dir.shadow.camera;
+      shCam.left = -half;
+      shCam.right = half;
+      shCam.top = half;
+      shCam.bottom = -half;
+      shCam.updateProjectionMatrix();
+    }
 
     const groundExt = Number(MODEL_CONFIG.GROUND_PLANE_EXTENT) || 5200;
+    const groundColor = MODEL_CONFIG.GROUND_COLOR ?? 0xffffff;
     const groundGeo = new THREE.PlaneGeometry(groundExt, groundExt);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x3d5c45,
-      metalness: 0,
-      roughness: 0.92
+    const groundMat = new THREE.MeshLambertMaterial({
+      color: groundColor
     });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.02;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    const gridExt = Number(MODEL_CONFIG.GRID_EXTENT) || 5200;
-    const gridDivs = Math.min(200, Math.max(48, Math.round(gridExt / 26)));
-    const grid = new THREE.GridHelper(gridExt, gridDivs, 0x1a3320, 0x2a4a30);
-    grid.material.opacity = 0.35;
-    grid.material.transparent = true;
-    scene.add(grid);
-
-    const underlayCol = MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_COLOR ?? 0x3d4652;
+    const underlayCol = MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_COLOR ?? 0xffffff;
     const underlayOp = Math.min(1, Math.max(0.15, Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_OPACITY) || 1));
     const underlayExt = Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_EXTENT) || 9200;
     const underlayGeo = new THREE.PlaneGeometry(underlayExt, underlayExt);
-    const underlayMat = new THREE.MeshBasicMaterial({
+    const underlayMat = new THREE.MeshLambertMaterial({
       color: underlayCol,
       transparent: underlayOp < 0.999,
       opacity: underlayOp,
@@ -2291,19 +2344,10 @@
     mapGroundUnderlay.rotation.x = -Math.PI / 2;
     const underlayY = Number(MODEL_CONFIG.DISTRICT_MAP_UNDERLAY_Y);
     mapGroundUnderlay.position.y = Number.isFinite(underlayY) ? underlayY : -0.12;
+    mapGroundUnderlay.receiveShadow = MODEL_CONFIG.ENABLE_BUILDING_SHADOWS !== false;
     mapGroundUnderlay.renderOrder = -2;
     mapGroundUnderlay.visible = false;
     scene.add(mapGroundUnderlay);
-
-    const mapGridSize = Math.min(2400, Math.max(960, underlayExt * 0.28));
-    mapGroundGrid = new THREE.GridHelper(mapGridSize, Math.round(mapGridSize / 10), 0x7a8798, 0x6a7685);
-    const gridY = Number(MODEL_CONFIG.DISTRICT_MAP_AUX_GRID_Y);
-    mapGroundGrid.position.y = Number.isFinite(gridY) ? gridY : -0.05;
-    mapGroundGrid.renderOrder = -1;
-    mapGroundGrid.material.transparent = true;
-    mapGroundGrid.material.opacity = 0.28;
-    mapGroundGrid.visible = false;
-    scene.add(mapGroundGrid);
 
     // --- Building registry ---
     const buildingMeshes = new Map(); // id -> root Object3D (корень расстановки)
@@ -4710,13 +4754,13 @@
     }
 
     function zoneColorForKind(kind) {
-      if (kind === 'park') return 0xa8d8a0;
-      if (kind === 'courtyard') return 0xb5dcc0;
-      return 0xb0ddb0;
+      if (kind === 'park') return 0xc5e8d8;
+      if (kind === 'courtyard') return 0xd6ebe3;
+      return 0xd0ebe2;
     }
 
     function zoneFillOpacity() {
-      return 0.58;
+      return 0.9;
     }
 
     function zoneCloseRadius() {
@@ -5252,8 +5296,7 @@
               fromDistrictEmbed = true;
               root.traverse((o) => {
                 if (o.isMesh) {
-                  o.castShadow = true;
-                  o.receiveShadow = true;
+                  applyCampusMeshShadowFlags(o);
                   fixBuildingMaterialsForMesh(o, b.id);
                   fixTooDarkMaterialsForMesh(o, b.id);
                 }
@@ -5279,8 +5322,7 @@
             sceneModel.userData.postFitUniformScale = sceneModel.scale.x;
             sceneModel.traverse((o) => {
               if (o.isMesh) {
-                o.castShadow = true;
-                o.receiveShadow = true;
+                applyCampusMeshShadowFlags(o);
                 fixBuildingMaterialsForMesh(o, b.id);
                 fixTooDarkMaterialsForMesh(o, b.id);
               }
@@ -5400,8 +5442,7 @@
           fitBuildingModelToRoot(sceneModel, normOpts);
           sceneModel.traverse((o) => {
             if (o.isMesh) {
-              o.castShadow = true;
-              o.receiveShadow = true;
+              applyCampusMeshShadowFlags(o);
               fixBuildingMaterialsForMesh(o, c.id);
               fixTooDarkMaterialsForMesh(o, c.id);
             }
@@ -6767,6 +6808,7 @@
       requestAnimationFrame(animate);
       TWEEN.update(t);
       controls.update();
+      updateSceneLighting();
       updateRouteAnimations(t);
       applyFloorInteriorLod();
       if (
