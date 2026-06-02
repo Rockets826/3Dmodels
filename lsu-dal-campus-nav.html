@@ -513,6 +513,17 @@
       <p class="hint" id="building-color-status" style="margin:8px 0 0 0;">—</p>
     </div>
 
+    <div id="atmosphere-panel" class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
+      <label>Атмосфера</label>
+      <p class="hint" style="margin:0 0 10px 0;">Как в Enscape / Lumion: прозрачность воздуха, облачность, дымка (AOD). Влияет на небо, туман и свет.</p>
+      <label for="atmos-transparency">Atmospheric Transparency — <span id="atmos-trans-readout">78%</span></label>
+      <input type="range" id="atmos-transparency" min="0" max="100" value="78" step="1" style="width:100%;" />
+      <label for="atmos-cloud" style="margin-top:8px;display:block;">Cloud Cover — <span id="atmos-cloud-readout">12%</span></label>
+      <input type="range" id="atmos-cloud" min="0" max="100" value="12" step="1" style="width:100%;" />
+      <label for="atmos-aod" style="margin-top:8px;display:block;">Aerosol Optical Depth — <span id="atmos-aod-readout">10%</span></label>
+      <input type="range" id="atmos-aod" min="0" max="100" value="10" step="1" style="width:100%;" />
+    </div>
+
     <div class="field" style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px;">
       <label>Расстановка корпусов (gizmo)</label>
       <div class="toggle-row">
@@ -1301,6 +1312,14 @@
       SCENE_SKY_COLOR: 0xf0f4f8,
       ENABLE_SCENE_FOG: false,
       SCENE_FOG_DENSITY: 0.00112,
+      /**
+       * Атмосфера (как Atmospheric Transparency / Cloud Cover / AOD в визуализаторах).
+       * Все три — 0…1. Меняют небо, туман, яркость солнца и мягкость теней.
+       */
+      ATMOSPHERE_CONTROLS_ENABLED: true,
+      ATMOSPHERIC_TRANSPARENCY: 0.78,
+      CLOUD_COVER: 0.12,
+      AEROSOL_OPTICAL_DEPTH: 0.1,
       /** Подложка под макет — шире охват при виде сверху с большой высоты */
       DISTRICT_MAP_UNDERLAY_EXTENT: 9200,
 
@@ -2077,12 +2096,6 @@
     const SKY_COLOR = MODEL_CONFIG.SCENE_SKY_COLOR ?? 0xf0f4f8;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(SKY_COLOR);
-    if (MODEL_CONFIG.ENABLE_SCENE_FOG === true) {
-      scene.fog = new THREE.FogExp2(
-        SKY_COLOR,
-        Number(MODEL_CONFIG.SCENE_FOG_DENSITY) || 0.00112
-      );
-    }
 
     const perspCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.5, 4000);
     perspCamera.position.set(160, 120, 200);
@@ -2506,6 +2519,131 @@
     scene.add(fillDir.target);
     scene.add(fillDir);
 
+    const atmosphereLightBase = {
+      sun: Number(MODEL_CONFIG.SUN_LIGHT_INTENSITY) || 1.55,
+      hemi: Number(MODEL_CONFIG.HEMISPHERE_LIGHT_INTENSITY) || 0.42,
+      amb: Number(MODEL_CONFIG.AMBIENT_LIGHT_INTENSITY) || 0.1,
+      fill: Number(MODEL_CONFIG.FILL_LIGHT_INTENSITY) || 0.1,
+      exposure: Number(MODEL_CONFIG.TONE_MAPPING_EXPOSURE) || 1.08,
+      groundShadowOpacity: Number(MODEL_CONFIG.GROUND_SHADOW_OPACITY) || 0.44,
+      shadowRadius: Number(MODEL_CONFIG.DIRECTIONAL_SHADOW_RADIUS) || 1.4,
+      sky: new THREE.Color(MODEL_CONFIG.SCENE_SKY_COLOR ?? 0xf0f4f8)
+    };
+    const groundShadowOverlays = [];
+
+    function atmosphereParam01(key, fallback) {
+      return THREE.MathUtils.clamp(Number(MODEL_CONFIG[key]) ?? fallback, 0, 1);
+    }
+
+    function applyAtmosphereVisuals() {
+      if (MODEL_CONFIG.ATMOSPHERE_CONTROLS_ENABLED === false) {
+        if (MODEL_CONFIG.ENABLE_SCENE_FOG === true) {
+          const c = atmosphereLightBase.sky.getHex();
+          scene.fog = new THREE.FogExp2(
+            c,
+            Number(MODEL_CONFIG.SCENE_FOG_DENSITY) || 0.00112
+          );
+        }
+        return;
+      }
+      const trans = atmosphereParam01('ATMOSPHERIC_TRANSPARENCY', 0.78);
+      const cloud = atmosphereParam01('CLOUD_COVER', 0.12);
+      const aod = atmosphereParam01('AEROSOL_OPTICAL_DEPTH', 0.1);
+      const haze = THREE.MathUtils.clamp((1 - trans) * 0.55 + aod * 0.88, 0, 1);
+      const overcast = cloud;
+
+      const sky = atmosphereLightBase.sky.clone();
+      sky.lerp(new THREE.Color(0xc4ccd6), haze * 0.7);
+      sky.lerp(new THREE.Color(0xe2e6ea), overcast * 0.4);
+      scene.background.copy(sky);
+      renderer.setClearColor(sky.getHex());
+
+      const fogByAtmos =
+        haze > 0.035 || MODEL_CONFIG.ENABLE_SCENE_FOG === true;
+      if (fogByAtmos) {
+        const density =
+          MODEL_CONFIG.ENABLE_SCENE_FOG === true && haze < 0.04
+            ? Number(MODEL_CONFIG.SCENE_FOG_DENSITY) || 0.00112
+            : THREE.MathUtils.lerp(0.0003, 0.0026, haze);
+        if (!scene.fog) {
+          scene.fog = new THREE.FogExp2(sky.getHex(), density);
+        } else {
+          scene.fog.color.setHex(sky.getHex());
+          scene.fog.density = density;
+        }
+      } else {
+        scene.fog = null;
+      }
+
+      dir.intensity =
+        atmosphereLightBase.sun *
+        THREE.MathUtils.lerp(1, 0.58, overcast) *
+        THREE.MathUtils.lerp(1, 0.76, aod);
+      hemi.intensity =
+        atmosphereLightBase.hemi * THREE.MathUtils.lerp(1, 1.5, overcast);
+      amb.intensity =
+        atmosphereLightBase.amb * THREE.MathUtils.lerp(1, 2.35, overcast);
+      fillDir.intensity =
+        atmosphereLightBase.fill * THREE.MathUtils.lerp(1, 2, overcast);
+      dir.shadow.radius =
+        atmosphereLightBase.shadowRadius *
+        THREE.MathUtils.lerp(1, 3.5, overcast);
+
+      if (MODEL_CONFIG.ENABLE_TONE_MAPPING !== false) {
+        renderer.toneMappingExposure =
+          atmosphereLightBase.exposure *
+          THREE.MathUtils.lerp(1, 0.86, overcast * 0.45 + haze * 0.4);
+      }
+
+      const shOp =
+        atmosphereLightBase.groundShadowOpacity *
+        THREE.MathUtils.lerp(1, 0.32, overcast) *
+        THREE.MathUtils.lerp(1, 0.6, haze);
+      for (const mesh of groundShadowOverlays) {
+        if (mesh?.material) {
+          mesh.material.opacity = shOp;
+          mesh.material.needsUpdate = true;
+        }
+      }
+    }
+
+    function syncAtmosphereUiFromConfig() {
+      const t = Math.round(atmosphereParam01('ATMOSPHERIC_TRANSPARENCY', 0.78) * 100);
+      const c = Math.round(atmosphereParam01('CLOUD_COVER', 0.12) * 100);
+      const a = Math.round(atmosphereParam01('AEROSOL_OPTICAL_DEPTH', 0.1) * 100);
+      const tEl = document.getElementById('atmos-transparency');
+      const cEl = document.getElementById('atmos-cloud');
+      const aEl = document.getElementById('atmos-aod');
+      if (tEl) tEl.value = String(t);
+      if (cEl) cEl.value = String(c);
+      if (aEl) aEl.value = String(a);
+      const tr = document.getElementById('atmos-trans-readout');
+      const cr = document.getElementById('atmos-cloud-readout');
+      const ar = document.getElementById('atmos-aod-readout');
+      if (tr) tr.textContent = `${t}%`;
+      if (cr) cr.textContent = `${c}%`;
+      if (ar) ar.textContent = `${a}%`;
+    }
+
+    function bindAtmosphereUi() {
+      const onChange = () => {
+        const t = document.getElementById('atmos-transparency');
+        const c = document.getElementById('atmos-cloud');
+        const a = document.getElementById('atmos-aod');
+        MODEL_CONFIG.ATMOSPHERIC_TRANSPARENCY =
+          (Number(t?.value) || 0) / 100;
+        MODEL_CONFIG.CLOUD_COVER = (Number(c?.value) || 0) / 100;
+        MODEL_CONFIG.AEROSOL_OPTICAL_DEPTH = (Number(a?.value) || 0) / 100;
+        syncAtmosphereUiFromConfig();
+        applyAtmosphereVisuals();
+      };
+      document
+        .getElementById('atmos-transparency')
+        ?.addEventListener('input', onChange);
+      document.getElementById('atmos-cloud')?.addEventListener('input', onChange);
+      document.getElementById('atmos-aod')?.addEventListener('input', onChange);
+    }
+
     function shadowCameraHalfExtent() {
       const fixed = Number(MODEL_CONFIG.SHADOW_CAMERA_HALF_EXTENT);
       if (Number.isFinite(fixed) && fixed > 0) return fixed;
@@ -2514,6 +2652,7 @@
     }
 
     function updateSceneLighting() {
+      applyAtmosphereVisuals();
       const orbit = controls.target;
       applySunLightPose(_sunPos, _sunTarget);
       dir.position.copy(_sunPos);
@@ -2552,6 +2691,7 @@
       mesh.receiveShadow = true;
       mesh.renderOrder = renderOrder ?? 1;
       scene.add(mesh);
+      groundShadowOverlays.push(mesh);
       return mesh;
     }
 
@@ -2593,6 +2733,10 @@
       0
     );
     if (mapGroundShadowOverlay) mapGroundShadowOverlay.visible = false;
+
+    syncAtmosphereUiFromConfig();
+    bindAtmosphereUi();
+    applyAtmosphereVisuals();
 
     let layoutSaveTimer = null;
 
@@ -7120,7 +7264,9 @@
       transformControls,
       saveBuildingLayoutToStorage,
       clearPersistedBuildingLayout,
-      applyPersistedBuildingLayout
+      applyPersistedBuildingLayout,
+      applyAtmosphereVisuals,
+      syncAtmosphereUiFromConfig
     };
   </script>
 </body>
